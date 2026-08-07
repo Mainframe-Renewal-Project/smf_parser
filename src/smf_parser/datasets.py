@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from importlib import import_module
 from typing import Literal
 
@@ -28,6 +28,7 @@ def read_dataset(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
+    system_ids: Collection[str] | None = None,
     records: int = 0,
     offset: int = 0,
     tail: bool = False,
@@ -44,6 +45,7 @@ def read_dataset(
         dataset_records,
         record_format=record_format,
         skip_short_records=skip_short_records,
+        system_ids=system_ids,
     )
 
 
@@ -52,6 +54,7 @@ def read_dataset_records(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
+    system_ids: Collection[str] | None = None,
 ) -> Iterator[SMFRecord]:
     """Yield SMF records from dataset records returned by ZOAU.
 
@@ -70,6 +73,7 @@ def read_dataset_records(
             records,
             record_format=record_format,
             skip_short_records=skip_short_records,
+            system_ids=system_ids,
         )
         return
 
@@ -109,6 +113,7 @@ def _read_smf_dataset_records(
     *,
     record_format: Literal["auto", "smf"],
     skip_short_records: bool,
+    system_ids: Collection[str] | None,
 ) -> Iterator[SMFRecord]:
     buffer = bytearray()
     buffer_offset = 0
@@ -132,6 +137,7 @@ def _read_smf_dataset_records(
             buffer,
             buffer_offset=buffer_offset,
             skip_invalid_records=skip_short_records,
+            system_ids=system_ids,
         )
         buffer_offset = logical_offset + len(data) - len(buffer)
         logical_offset += len(data)
@@ -148,6 +154,7 @@ def _drain_smf_buffer(
     *,
     buffer_offset: int,
     skip_invalid_records: bool,
+    system_ids: Collection[str] | None,
 ) -> Iterator[SMFRecord]:
     consumed = 0
     while len(buffer) >= _MIN_SMF_RECORD_LENGTH:
@@ -161,7 +168,7 @@ def _drain_smf_buffer(
             consumed += 1
             continue
         if record_length > len(buffer):
-            if skip_invalid_records and _has_complete_candidate_after_first_byte(buffer):
+            if skip_invalid_records and _has_complete_candidate_after_first_byte(buffer, system_ids=system_ids):
                 del buffer[0]
                 consumed += 1
                 continue
@@ -177,7 +184,7 @@ def _drain_smf_buffer(
             del buffer[0]
             consumed += 1
             continue
-        if not _is_plausible_smf_header(header):
+        if not _is_plausible_smf_header(header, system_ids=system_ids):
             if not skip_invalid_records:
                 parse_header(data, offset=header_offset)
             del buffer[0]
@@ -188,7 +195,7 @@ def _drain_smf_buffer(
         consumed += record_length
 
 
-def _is_plausible_smf_header(header: SMFHeader) -> bool:
+def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] | None) -> bool:
     if not 0 <= header.time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
         return False
     if header.record_type == 0 and header.length not in _SMF_TYPE_0_LENGTHS:
@@ -200,10 +207,12 @@ def _is_plausible_smf_header(header: SMFHeader) -> bool:
         return False
     if not _is_plausible_identifier(header.system_id, allow_blank=False):
         return False
+    if system_ids is not None and header.system_id_text not in system_ids:
+        return False
     return header.subsystem_id is None or _is_plausible_identifier(header.subsystem_id, allow_blank=True)
 
 
-def _has_complete_candidate_after_first_byte(buffer: bytearray) -> bool:
+def _has_complete_candidate_after_first_byte(buffer: bytearray, *, system_ids: Collection[str] | None) -> bool:
     for index in range(1, len(buffer) - _MIN_SMF_RECORD_LENGTH + 1):
         record_length = int.from_bytes(buffer[index : index + 2], "big")
         if record_length & 0x8000:
@@ -216,7 +225,7 @@ def _has_complete_candidate_after_first_byte(buffer: bytearray) -> bool:
             header = parse_header(bytes(buffer[index : index + record_length]))
         except SMFParseError:
             continue
-        if _is_plausible_smf_header(header):
+        if _is_plausible_smf_header(header, system_ids=system_ids):
             return True
     return False
 

@@ -12,7 +12,7 @@ def ebcdic(value: str) -> bytes:
     return value.encode("cp037")
 
 
-def standard_record(record_type: int, *, subtype: int = 0, body: bytes = b"") -> bytes:
+def standard_record(record_type: int, *, subtype: int = 0, system_id: str = "SYS1", body: bytes = b"") -> bytes:
     length = 24 + len(body)
     return (
         struct.pack(
@@ -23,7 +23,7 @@ def standard_record(record_type: int, *, subtype: int = 0, body: bytes = b"") ->
             record_type,
             12_345,
             b"\x00\x20\x23\x1f",
-            ebcdic("SYS1"),
+            ebcdic(system_id),
             ebcdic("SMF "),
             subtype,
         )
@@ -112,6 +112,17 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].record_type, 30)
         self.assertEqual(records[0].offset, len(false_type_0_candidate()))
 
+    def test_system_id_filter_skips_header_shaped_payload(self) -> None:
+        false = standard_record(1, subtype=50372, system_id="YCPU", body=b"payload")
+        valid = standard_record(30, subtype=2, system_id="DBRA")
+
+        records = list(read_dataset_records([false + valid], system_ids={"DBRA"}))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].header.system_id_text, "DBRA")
+        self.assertEqual(records[0].offset, len(false))
+
     def test_reads_dataset_records_that_include_external_rdw(self) -> None:
         smf_record = standard_record(14, body=b"payload")
         dataset_record = struct.pack(">HH", len(smf_record) + 4, 0) + smf_record
@@ -140,12 +151,12 @@ class DatasetReaderTests(unittest.TestCase):
 
         def read_as_bytes(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
             calls.append((dataset_name, records, offset, tail))
-            return [standard_record(2)]
+            return [standard_record(2, system_id="DBRA")]
 
         fake_datasets = SimpleNamespace(read_as_bytes=read_as_bytes)
 
         with patch("smf_parser.datasets.import_module", return_value=fake_datasets):
-            parsed = list(read_dataset("USER.SMF.UNLOAD", records=10, offset=3, tail=True))
+            parsed = list(read_dataset("USER.SMF.UNLOAD", records=10, offset=3, tail=True, system_ids={"DBRA"}))
 
         self.assertEqual([record.record_type for record in parsed], [2])
         self.assertEqual(calls, [("USER.SMF.UNLOAD", 10, 3, True)])
