@@ -150,6 +150,19 @@ class HeaderCatalogTests(unittest.TestCase):
         self.assertIsNotNone(catalog.by_name("ifasmfh"))
         self.assertTrue(any(header.name == "ifasmfh.h" for header in catalog.for_record_type(92)))
 
+    def test_generic_headers_do_not_match_every_record_type(self) -> None:
+        include_dir = Path("/compiled/zos")
+        catalog = HeaderCatalog(
+            include_dir=include_dir,
+            headers=(
+                HeaderDefinition(name="ifasmfh.h", path=include_dir / "ifasmfh.h", record_types=(), generic=True),
+                HeaderDefinition(name="ifasmfr1.h", path=include_dir / "ifasmfr1.h", record_types=(1,), generic=False),
+            ),
+        )
+
+        self.assertEqual(catalog.for_record_type(0), ())
+        self.assertEqual(tuple(header.name for header in catalog.for_record_type(1)), ("ifasmfr1.h",))
+
 
 if __name__ == "__main__":
     unittest.main()

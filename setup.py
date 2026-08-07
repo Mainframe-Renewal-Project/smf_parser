@@ -14,6 +14,7 @@ from setuptools.command.build_py import build_py as build_py_base
 
 DEFAULT_INCLUDE_DIR = Path("/usr/include/zos")
 ROOT = Path(__file__).parent
+HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
 
 
 class build_py(build_py_base):
@@ -63,7 +64,11 @@ def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
             source = source_dir / f"compile_{header_path.stem}.c"
             source.write_text(f"#include <{header_name}>\nint main(void) {{ return 0; }}\n", encoding="utf-8")
             try:
-                compiler.compile([str(source)], include_dirs=[str(include_dir)])
+                compiler.compile(
+                    [str(source)],
+                    include_dirs=[str(include_dir)],
+                    extra_postargs=list(HEADER_COMPILE_FLAGS),
+                )
             except CompileError as error:
                 failures.append(f"{header_name}: {error}")
                 continue

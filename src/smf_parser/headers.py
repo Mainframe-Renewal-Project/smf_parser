@@ -47,7 +47,7 @@ class HeaderCatalog:
         return None
 
     def for_record_type(self, record_type: int) -> tuple[HeaderDefinition, ...]:
-        return tuple(header for header in self.headers if header.generic or record_type in header.record_types)
+        return tuple(header for header in self.headers if record_type in header.record_types)
 
     def structs(self) -> tuple[str, ...]:
         return ()
