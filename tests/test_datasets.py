@@ -271,6 +271,45 @@ class DatasetReaderTests(unittest.TestCase):
         ):
             list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
 
+    def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
+        calls: list[tuple[str, int, int, bool]] = []
+        fake_datasets = SimpleNamespace(
+            list_datasets=lambda pattern: [
+                SimpleNamespace(name="USER.SMF.UNLOAD.G0001V00", record_format="VBS"),
+            ]
+            if pattern == "USER.SMF.UNLOAD.*"
+            else [],
+            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+        )
+
+        def read_vbs_dataset(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
+            calls.append((dataset_name, records, offset, tail))
+            return [standard_record(2, system_id="DBRA")]
+
+        fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "smf_parser._native":
+                return fake_native
+            raise ImportError(name)
+
+        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)",
+                    records=10,
+                    offset=3,
+                    tail=True,
+                    header_catalog=header_catalog(2),
+                    system_ids={"DBRA"},
+                )
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [2])
+        self.assertEqual(calls, [("USER.SMF.UNLOAD(-1)", 10, 3, True)])
+
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
             patch("smf_parser.datasets.import_module", side_effect=ImportError("no zoau")),

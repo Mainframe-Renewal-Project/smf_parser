@@ -1,7 +1,9 @@
 #define PY_SSIZE_T_CLEAN
 
 #include <Python.h>
+#include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <ifasmfh.h>
@@ -13,6 +15,7 @@
 #define EXTENDED_RECORD_INDICATOR 126
 #define SUBTYPE_VALID_FLAG 0x40
 #define EXTENDED_HEADER_FLAG 0x20
+#define VBS_MAX_LOGICAL_RECORD_LENGTH 32760
 
 static uint16_t read_u16_be(const unsigned char *data) {
     return (uint16_t)(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
@@ -149,8 +152,106 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
     return result;
 }
 
+static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwargs) {
+#ifdef __MVS__
+    static char *keywords[] = {"dataset_name", "records", "offset", "tail", NULL};
+    const char *dataset_name;
+    int records = 0;
+    int offset = 0;
+    int tail = 0;
+    char dataset_path[512];
+    unsigned char buffer[VBS_MAX_LOGICAL_RECORD_LENGTH];
+    FILE *file;
+    PyObject *result;
+    int skipped = 0;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|iip", keywords, &dataset_name, &records, &offset, &tail)) {
+        return NULL;
+    }
+    if (records < 0 || offset < 0) {
+        PyErr_SetString(PyExc_ValueError, "records and offset must be non-negative");
+        return NULL;
+    }
+
+    if (strncmp(dataset_name, "//", 2) == 0 || strncmp(dataset_name, "DD:", 3) == 0 || dataset_name[0] == '/') {
+        if (snprintf(dataset_path, sizeof(dataset_path), "%s", dataset_name) >= (int)sizeof(dataset_path)) {
+            PyErr_SetString(PyExc_ValueError, "dataset name is too long");
+            return NULL;
+        }
+    } else if (snprintf(dataset_path, sizeof(dataset_path), "//'%.500s'", dataset_name) >= (int)sizeof(dataset_path)) {
+        PyErr_SetString(PyExc_ValueError, "dataset name is too long");
+        return NULL;
+    }
+
+    file = fopen(dataset_path, "rb,type=record");
+    if (file == NULL) {
+        return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
+    }
+
+    result = PyList_New(0);
+    if (result == NULL) {
+        fclose(file);
+        return NULL;
+    }
+
+    for (;;) {
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer), file);
+        PyObject *record;
+
+        if (bytes_read == 0) {
+            if (feof(file)) {
+                break;
+            }
+            Py_DECREF(result);
+            fclose(file);
+            return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
+        }
+
+        if (skipped < offset) {
+            skipped += 1;
+            continue;
+        }
+
+        record = PyBytes_FromStringAndSize((const char *)buffer, (Py_ssize_t)bytes_read);
+        if (record == NULL) {
+            Py_DECREF(result);
+            fclose(file);
+            return NULL;
+        }
+        if (PyList_Append(result, record) < 0) {
+            Py_DECREF(record);
+            Py_DECREF(result);
+            fclose(file);
+            return NULL;
+        }
+        Py_DECREF(record);
+
+        if (!tail && records > 0 && PyList_GET_SIZE(result) >= records) {
+            break;
+        }
+    }
+
+    if (fclose(file) != 0) {
+        Py_DECREF(result);
+        return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
+    }
+
+    if (tail && records > 0 && PyList_GET_SIZE(result) > records) {
+        Py_ssize_t length = PyList_GET_SIZE(result);
+        PyObject *tail_records = PyList_GetSlice(result, length - records, length);
+        Py_DECREF(result);
+        return tail_records;
+    }
+    return result;
+#else
+    PyErr_SetString(PyExc_NotImplementedError, "VBS dataset reading is only available in native z/OS builds");
+    return NULL;
+#endif
+}
+
 static PyMethodDef methods[] = {
     {"parse_header", parse_header, METH_VARARGS, "Parse an SMF record header using the compiled z/OS C header build."},
+    {"read_vbs_dataset", (PyCFunction)read_vbs_dataset, METH_VARARGS | METH_KEYWORDS, "Read logical records from a z/OS VBS dataset using native record I/O."},
     {NULL, NULL, 0, NULL},
 };
 

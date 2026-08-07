@@ -46,8 +46,17 @@ def read_dataset(
     """
 
     datasets = _zoau_datasets_module()
-    _reject_unsupported_zoau_dataset_format(datasets, dataset_name)
-    dataset_records = datasets.read_as_bytes(dataset_name, records=records, offset=offset, tail=tail)
+    vbs_entries = _zoau_vbs_dataset_entries(datasets, dataset_name)
+    if vbs_entries:
+        dataset_records = _read_native_vbs_dataset_records(
+            dataset_name,
+            entries=vbs_entries,
+            records=records,
+            offset=offset,
+            tail=tail,
+        )
+    else:
+        dataset_records = datasets.read_as_bytes(dataset_name, records=records, offset=offset, tail=tail)
     yield from read_dataset_records(
         dataset_records,
         record_format=record_format,
@@ -111,17 +120,17 @@ def _zoau_datasets_module():
         ) from error
 
 
-def _reject_unsupported_zoau_dataset_format(datasets, dataset_name: str) -> None:
+def _zoau_vbs_dataset_entries(datasets, dataset_name: str):
     list_datasets = getattr(datasets, "list_datasets", None)
     if list_datasets is None:
-        return
+        return ()
 
     entries = _list_zoau_dataset_metadata(list_datasets, dataset_name)
     if not entries:
         base = dataset_name.split("(", maxsplit=1)[0]
         entries = _list_zoau_dataset_metadata(list_datasets, f"{base}.*")
     if not entries:
-        return
+        return ()
 
     record_formats = {
         str(record_format).upper()
@@ -129,11 +138,35 @@ def _reject_unsupported_zoau_dataset_format(datasets, dataset_name: str) -> None
         if (record_format := getattr(entry, "record_format", None)) is not None
     }
     if record_formats == {"VBS"}:
-        names = ", ".join(str(getattr(entry, "name", "<unknown>")) for entry in entries[-3:])
-        raise ZOAUUnsupportedDatasetError(
-            f"ZOAU reports {dataset_name} as RECFM=VBS ({names}); read_as_bytes() exposes spanned segments, "
-            "not complete SMF logical records. A z/OS VBS record reconstruction path is required before parsing."
-        )
+        return entries
+    return ()
+
+
+def _read_native_vbs_dataset_records(
+    dataset_name: str,
+    *,
+    entries,
+    records: int,
+    offset: int,
+    tail: bool,
+) -> Iterable[bytes]:
+    try:
+        native = import_module("smf_parser._native")
+    except ImportError as error:
+        raise _unsupported_vbs_dataset_error(dataset_name, entries) from error
+
+    read_vbs_dataset = getattr(native, "read_vbs_dataset", None)
+    if read_vbs_dataset is None:
+        raise _unsupported_vbs_dataset_error(dataset_name, entries)
+    return read_vbs_dataset(dataset_name, records=records, offset=offset, tail=tail)
+
+
+def _unsupported_vbs_dataset_error(dataset_name: str, entries) -> ZOAUUnsupportedDatasetError:
+    names = ", ".join(str(getattr(entry, "name", "<unknown>")) for entry in entries[-3:])
+    return ZOAUUnsupportedDatasetError(
+        f"ZOAU reports {dataset_name} as RECFM=VBS ({names}); read_as_bytes() exposes spanned segments, "
+        "not complete SMF logical records. A z/OS VBS record reconstruction path is required before parsing."
+    )
 
 
 def _list_zoau_dataset_metadata(list_datasets, pattern: str):
