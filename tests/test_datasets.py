@@ -27,7 +27,14 @@ def ebcdic(value: str) -> bytes:
     return value.encode(EBCDIC_TEST_ENCODING)
 
 
-def standard_record(record_type: int, *, subtype: int = 0, system_id: str = "SYS1", body: bytes = b"") -> bytes:
+def standard_record(
+    record_type: int,
+    *,
+    subtype: int = 0,
+    system_id: str = "SYS1",
+    date: bytes = b"\x00\x20\x23\x1f",
+    body: bytes = b"",
+) -> bytes:
     length = 24 + len(body)
     return (
         struct.pack(
@@ -37,7 +44,7 @@ def standard_record(record_type: int, *, subtype: int = 0, system_id: str = "SYS
             0x40,
             record_type,
             12_345,
-            b"\x00\x20\x23\x1f",
+            date,
             ebcdic(system_id),
             ebcdic("SMF "),
             subtype,
@@ -143,23 +150,19 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual([record.record_type for record in records], [30])
         self.assertEqual(records[0].offset, 14)
 
-    def test_skips_false_record_candidates_while_resynchronizing(self) -> None:
+    def test_does_not_resynchronize_after_false_record_candidates(self) -> None:
         valid = standard_record(30, subtype=2)
 
         records = list(read_dataset_records([false_record_candidate() + valid], header_catalog=header_catalog(30)))
 
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].record_type, 30)
-        self.assertEqual(records[0].offset, len(false_record_candidate()))
+        self.assertEqual(records, [])
 
-    def test_skips_candidates_without_compiled_record_header(self) -> None:
+    def test_does_not_resynchronize_after_candidates_without_compiled_record_header(self) -> None:
         valid = standard_record(30, subtype=2)
 
         records = list(read_dataset_records([false_type_0_candidate() + valid], header_catalog=header_catalog(30)))
 
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].record_type, 30)
-        self.assertEqual(records[0].offset, len(false_type_0_candidate()))
+        self.assertEqual(records, [])
 
     def test_skips_payload_candidates_inside_unsupported_records(self) -> None:
         false = unsupported_record_with_embedded_supported_candidate()
@@ -167,9 +170,7 @@ class DatasetReaderTests(unittest.TestCase):
 
         records = list(read_dataset_records([false + valid], header_catalog=header_catalog(1, 30)))
 
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].record_type, 30)
-        self.assertEqual(records[0].offset, len(false))
+        self.assertEqual(records, [])
 
     def test_does_not_scan_inside_incomplete_records(self) -> None:
         records = list(
@@ -197,10 +198,14 @@ class DatasetReaderTests(unittest.TestCase):
 
         records = list(read_dataset_records([false + valid], header_catalog=header_catalog(30), system_ids={"DBRA"}))
 
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].record_type, 30)
-        self.assertEqual(records[0].header.system_id_text, "DBRA")
-        self.assertEqual(records[0].offset, len(false))
+        self.assertEqual(records, [])
+
+    def test_skips_records_with_non_packed_decimal_smf_date(self) -> None:
+        record = standard_record(30, subtype=2, date=ebcdic("YCPU"))
+
+        records = list(read_dataset_records([record], header_catalog=header_catalog(30)))
+
+        self.assertEqual(records, [])
 
     def test_reads_dataset_records_that_include_external_rdw(self) -> None:
         smf_record = standard_record(14, body=b"payload")

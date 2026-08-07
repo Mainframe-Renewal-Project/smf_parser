@@ -193,18 +193,16 @@ def _drain_smf_buffer(
         except SMFParseError:
             if not skip_invalid_records:
                 raise
-            del buffer[:record_length]
-            consumed += record_length
-            continue
+            del buffer[:]
+            return
         header_definitions = header_catalog.for_record_type(header.record_type)
         if not header_definitions or not _is_plausible_smf_header(header, system_ids=system_ids):
             if not skip_invalid_records:
                 if not header_definitions:
                     raise HeaderCatalogError(f"no z/OS C header definition found for SMF record type {header.record_type}")
                 parse_header(data, offset=header_offset)
-            del buffer[:record_length]
-            consumed += record_length
-            continue
+            del buffer[:]
+            return
         yield SMFRecord(
             data=data,
             header=header,
@@ -222,6 +220,8 @@ def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] |
         if not header.has_extended_header or header.extended_record_type is None:
             return False
     elif header.has_extended_header:
+        return False
+    if not _is_plausible_smf_date(header.date):
         return False
     if not _is_plausible_identifier(header.system_id, allow_blank=False):
         return False
@@ -242,6 +242,8 @@ def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | N
 
     time_hundredths = int.from_bytes(data[6:10], "big", signed=True)
     if not 0 <= time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
+        return False
+    if not _is_plausible_smf_date(data[10:14]):
         return False
     if not _is_plausible_identifier(data[14:18], allow_blank=False):
         return False
@@ -265,6 +267,16 @@ def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
     except UnicodeDecodeError:
         return False
     return all(character.isalnum() or character in "#$@_" for character in text)
+
+
+def _is_plausible_smf_date(value: bytes) -> bool:
+    if len(value) != 4:
+        return False
+    nibbles = tuple(nibble for byte in value for nibble in (byte >> 4, byte & 0x0F))
+    if nibbles[-1] != 0x0F or any(nibble > 9 for nibble in nibbles[:-1]):
+        return False
+    day_of_year = nibbles[4] * 100 + nibbles[5] * 10 + nibbles[6]
+    return 1 <= day_of_year <= 366
 
 
 def _read_one_rdw_dataset_record(data: bytes, *, logical_offset: int, header_catalog: HeaderCatalog) -> Iterator[SMFRecord]:
