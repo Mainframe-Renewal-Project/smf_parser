@@ -42,7 +42,8 @@ def read_dataset(
     """Yield SMF records from a z/OS dataset using ZOAU when available.
 
     ZOAU is imported lazily because it is distributed with z/OS tooling rather
-    than PyPI. The dataset is read with ``zoautil_py.datasets.read_as_bytes``.
+    than PyPI. VBS datasets use the native z/OS logical-record reader when it
+    is available; other datasets are read with ``zoautil_py.datasets.read_as_bytes``.
     """
 
     datasets = _zoau_datasets_module()
