@@ -42,7 +42,7 @@ class HeaderCatalog:
     def by_name(self, name: str) -> HeaderDefinition | None:
         normalized = name if name.endswith(".h") else f"{name}.h"
         for header in self.headers:
-            if header.name == normalized:
+            if header.name == normalized or header.path.name == name:
                 return header
         return None
 
@@ -75,7 +75,7 @@ def _compiled_headers() -> tuple[Path, tuple[HeaderDefinition, ...]]:
     definitions = tuple(
         HeaderDefinition(
             name=entry["name"],
-            path=include_dir / entry["name"],
+            path=Path(entry.get("path", include_dir / entry["name"])),
             record_types=tuple(entry.get("record_types", ())),
             generic=bool(entry.get("generic", False)),
         )

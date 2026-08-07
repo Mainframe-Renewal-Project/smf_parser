@@ -358,11 +358,15 @@ def _drain_smf_buffer(
             consumed += record_length
             continue
         header_definitions = header_catalog.for_record_type(header.record_type)
-        if not header_definitions or not _is_plausible_smf_header(header, system_ids=system_ids):
+        header_is_plausible = _is_plausible_smf_header(header, system_ids=system_ids)
+        if not header_definitions or not header_is_plausible:
             if not skip_invalid_records:
                 if not header_definitions:
                     raise HeaderCatalogError(f"no z/OS C header definition found for SMF record type {header.record_type}")
                 parse_header(data, offset=header_offset)
+            if not header_is_plausible:
+                del buffer[:]
+                return
             if not trusted_record_boundaries:
                 del buffer[:]
                 return

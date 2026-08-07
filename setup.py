@@ -15,6 +15,7 @@ from setuptools.command.build_py import build_py as build_py_base
 from wheel.bdist_wheel import bdist_wheel as bdist_wheel_base
 
 DEFAULT_INCLUDE_DIR = Path("/usr/include/zos")
+DEFAULT_IBM_INCLUDE_DIR = Path("/usr/include/IBM")
 ROOT = Path(__file__).parent
 HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
 
@@ -59,10 +60,23 @@ def _include_dir() -> Path:
     return DEFAULT_INCLUDE_DIR
 
 
+def _include_dirs() -> tuple[Path, ...]:
+    from os import environ
+
+    include_dir = _include_dir()
+    include_dirs = [include_dir]
+    configured_ibm_include = environ.get("SMF_PARSER_IBM_INCLUDE")
+    ibm_include_dir = Path(configured_ibm_include) if configured_ibm_include else include_dir.parent / "IBM"
+    if ibm_include_dir != include_dir:
+        include_dirs.append(ibm_include_dir)
+    return tuple(include_dirs)
+
+
 def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
     if not include_dir.is_dir():
         raise RuntimeError(f"z/OS C header directory does not exist: {include_dir}")
 
+    include_dirs = _include_dirs()
     compiler = new_compiler()
     customize_compiler(compiler)
     compiled: list[dict[str, object]] = []
@@ -72,23 +86,25 @@ def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
         source_dir = Path(source_dir_name)
         for target in _header_targets():
             header_name = str(target["name"])
-            header_path = include_dir / header_name
-            if not header_path.is_file():
+            resolved = _resolve_header(target, include_dirs)
+            if resolved is None:
                 continue
-            source = source_dir / f"compile_{header_path.stem}.c"
-            source.write_text(f"#include <{header_name}>\nint main(void) {{ return 0; }}\n", encoding="utf-8")
+            include_name, header_path = resolved
+            source = source_dir / f"compile_{header_path.stem.lower()}.c"
+            source.write_text(f"#include <{include_name}>\nint main(void) {{ return 0; }}\n", encoding="utf-8")
             try:
                 compiler.compile(
                     [str(source)],
-                    include_dirs=[str(include_dir)],
+                    include_dirs=[str(path) for path in include_dirs],
                     extra_postargs=list(HEADER_COMPILE_FLAGS),
                 )
             except CompileError as error:
-                failures.append(f"{header_name}: {error}")
+                failures.append(f"{header_name} ({include_name}): {error}")
                 continue
             compiled.append(
                 {
                     "name": header_name,
+                    "path": str(header_path),
                     "record_types": tuple(target["record_types"]),
                     "generic": bool(target["generic"]),
                 }
@@ -103,6 +119,16 @@ def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
     return compiled
 
 
+def _resolve_header(target: dict[str, Any], include_dirs: tuple[Path, ...]) -> tuple[str, Path] | None:
+    header_names = (str(target["name"]), *(str(name) for name in target.get("alternate_names", ())))
+    for header_name in dict.fromkeys(header_names):
+        for include_dir in include_dirs:
+            header_path = include_dir / header_name
+            if header_path.is_file():
+                return header_name, header_path
+    return None
+
+
 def _header_targets() -> tuple[dict[str, Any], ...]:
     registry_path = ROOT / "src" / "smf_parser" / "_header_registry.py"
     spec = spec_from_file_location("_smf_parser_header_registry", registry_path)
@@ -114,11 +140,10 @@ def _header_targets() -> tuple[dict[str, Any], ...]:
 
 
 def _native_extension() -> Extension:
-    include_dir = _include_dir()
     return Extension(
         "smf_parser._native",
         sources=["src/smf_parser/_native.c"],
-        include_dirs=[str(include_dir)],
+        include_dirs=[str(path) for path in _include_dirs()],
         extra_compile_args=list(HEADER_COMPILE_FLAGS),
     )
 

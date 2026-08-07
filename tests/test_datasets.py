@@ -388,6 +388,37 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual([record.record_type for record in parsed], [2])
 
+    def test_read_dataset_does_not_resync_inside_implausible_native_vbs_chunk(self) -> None:
+        fake_datasets = SimpleNamespace(
+            list_datasets=lambda pattern: [],
+            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+        )
+        fake_gdgs = SimpleNamespace(
+            GenerationDataGroupView=lambda base: SimpleNamespace(
+                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+            )
+        )
+        implausible_record = standard_record(2, system_id="DBRA", date=ebcdic("YCPU"), body=b"implausible")
+        supported_record = standard_record(30, system_id="DBRA", body=b"supported")
+
+        fake_native = SimpleNamespace(
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [implausible_record + supported_record],
+        )
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "zoautil_py.gdgs":
+                return fake_gdgs
+            if name == "smf_parser._native":
+                return fake_native
+            raise ImportError(name)
+
+        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
+            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30)))
+
+        self.assertEqual(parsed, [])
+
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
             patch("smf_parser.datasets.import_module", side_effect=ImportError("no zoau")),
