@@ -213,7 +213,7 @@ def _read_native_vbs_smf_records(
         skip_short_records=False,
         header_catalog=_require_header_catalog(header_catalog),
         system_ids=system_ids,
-        split_on_record_start=False,
+        split_on_record_start=True,
         skip_invalid_records=True,
         trusted_record_boundaries=True,
     )
@@ -297,7 +297,7 @@ def _read_smf_dataset_records(
             continue
 
         if split_on_record_start and buffer and _looks_like_smf_record_start(data, system_ids=system_ids):
-            if not skip_short_records:
+            if not skip_invalid:
                 parse_header(bytes(buffer), offset=buffer_offset)
             buffer.clear()
 
