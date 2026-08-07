@@ -343,6 +343,9 @@ def _drain_smf_buffer(
             del buffer[:]
             return
         if record_length > len(buffer):
+            if trusted_record_boundaries:
+                del buffer[:]
+                return
             if not skip_invalid_records and not trusted_record_boundaries:
                 parse_header(bytes(buffer), offset=buffer_offset + consumed)
             break

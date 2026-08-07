@@ -325,7 +325,7 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual([record.record_type for record in parsed], [2])
         self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True)])
 
-    def test_read_dataset_concatenates_native_vbs_chunks(self) -> None:
+    def test_read_dataset_does_not_concatenate_incomplete_native_vbs_chunks(self) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
             read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
@@ -335,11 +335,11 @@ class DatasetReaderTests(unittest.TestCase):
                 generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
             )
         )
-        record = standard_record(2, system_id="DBRA", body=b"payload" * 20)
-        chunks = [record[:10], record[10:31], record[31:]]
+        incomplete = standard_record(2, system_id="DBRA", body=b"payload" * 20)[:31]
+        complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: chunks,
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
         )
 
         def import_module_side_effect(name: str):
@@ -352,10 +352,9 @@ class DatasetReaderTests(unittest.TestCase):
             raise ImportError(name)
 
         with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2)))
+            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30)))
 
-        self.assertEqual(len(parsed), 1)
-        self.assertEqual(parsed[0].data, record)
+        self.assertEqual([record.record_type for record in parsed], [30])
 
     def test_read_dataset_does_not_concatenate_new_native_vbs_record_starts(self) -> None:
         fake_datasets = SimpleNamespace(
