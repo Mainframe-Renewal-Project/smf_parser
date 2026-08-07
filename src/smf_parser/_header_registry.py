@@ -45,6 +45,7 @@ HEADER_TARGETS = (
     {"name": "cnzmysm2.h", "record_types": (90,), "generic": False},
     {"name": "csvdlsmf.h", "record_types": (90,), "generic": False},
     {"name": "csvapsmf.h", "record_types": (90,), "generic": False},
+    {"name": "ihavbsmf.h", "record_types": (90,), "generic": False},
     {"name": "iecsmf94.h", "record_types": (94,), "generic": False},
     {"name": "iwmsmf90.h", "record_types": (97,), "generic": False},
     {"name": "iwmsmf97.h", "record_types": (97,), "generic": False},
