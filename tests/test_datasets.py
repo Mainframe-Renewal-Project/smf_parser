@@ -31,6 +31,40 @@ def standard_record(record_type: int, *, subtype: int = 0, body: bytes = b"") ->
     )
 
 
+def false_record_candidate() -> bytes:
+    length = 472
+    header = struct.pack(
+        ">HHBBi4s4s4sH",
+        length,
+        0,
+        0x40,
+        240,
+        12_345,
+        b"\x00\x20\x23\x1f",
+        ebcdic(".131"),
+        ebcdic(".88."),
+        61944,
+    )
+    return header + (b"\0" * (length - len(header)))
+
+
+def false_type_0_candidate() -> bytes:
+    length = 208
+    header = struct.pack(
+        ">HHBBi4s4s4sH",
+        length,
+        0,
+        0x40,
+        0,
+        12_345,
+        b"\x00\x20\x23\x1f",
+        ebcdic("DBRA"),
+        ebcdic("SMF "),
+        0,
+    )
+    return header + (b"\0" * (length - len(header)))
+
+
 class DatasetReaderTests(unittest.TestCase):
     def test_reads_dataset_records_that_are_smf_records(self) -> None:
         records = list(read_dataset_records([standard_record(30, subtype=2)]))
@@ -59,6 +93,24 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual([record.record_type for record in records], [61, 30])
         self.assertEqual(records[1].offset, len(first) + 14)
+
+    def test_skips_false_record_candidates_while_resynchronizing(self) -> None:
+        valid = standard_record(30, subtype=2)
+
+        records = list(read_dataset_records([false_record_candidate() + valid]))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].offset, len(false_record_candidate()))
+
+    def test_skips_false_type_0_candidates_with_impossible_lengths(self) -> None:
+        valid = standard_record(30, subtype=2)
+
+        records = list(read_dataset_records([false_type_0_candidate() + valid]))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].offset, len(false_type_0_candidate()))
 
     def test_reads_dataset_records_that_include_external_rdw(self) -> None:
         smf_record = standard_record(14, body=b"payload")
