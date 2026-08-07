@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from os import environ
 from pathlib import Path
+
+from .errors import HeaderCatalogError
 
 _STRUCT_PATTERN = re.compile(r"\bstruct\s+([A-Za-z_]\w*)\s*\{")
 _RECORD_TYPE_PATTERNS = (
@@ -35,6 +38,8 @@ class HeaderCatalog:
     def discover(cls, include_dir: str | Path | None = None) -> HeaderCatalog:
         root = Path(include_dir) if include_dir is not None else default_include_dir()
         definitions = tuple(_read_header(path) for path in sorted(root.glob("*.h")))
+        if not definitions:
+            raise HeaderCatalogError(f"no z/OS C headers found in {root}")
         return cls(include_dir=root, headers=definitions)
 
     def by_name(self, name: str) -> HeaderDefinition | None:
@@ -52,9 +57,12 @@ class HeaderCatalog:
 
 
 def default_include_dir() -> Path:
-    """Return the repository include directory used by this source checkout."""
+    """Return the default z/OS C header include directory."""
 
-    return Path(__file__).resolve().parents[2] / "include" / "zos"
+    configured = environ.get("SMF_PARSER_ZOS_INCLUDE")
+    if configured:
+        return Path(configured)
+    return Path("/usr/include/zos")
 
 
 def _read_header(path: Path) -> HeaderDefinition:

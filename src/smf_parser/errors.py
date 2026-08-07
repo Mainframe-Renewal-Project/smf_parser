@@ -21,5 +21,9 @@ class TruncatedSMFRecord(SMFParseError):
     """Raised when a record or record prefix ends before its declared length."""
 
 
+class HeaderCatalogError(SMFError):
+    """Raised when required z/OS C headers are unavailable or incomplete."""
+
+
 class ZOAUMissingError(SMFError):
     """Raised when a ZOAU-only API is used without ZOAU installed."""

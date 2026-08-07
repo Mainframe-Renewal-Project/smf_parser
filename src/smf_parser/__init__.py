@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .datasets import read_dataset, read_dataset_records
-from .errors import SMFError, SMFParseError, TruncatedSMFRecord, ZOAUMissingError
+from .errors import HeaderCatalogError, SMFError, SMFParseError, TruncatedSMFRecord, ZOAUMissingError
 from .headers import HeaderCatalog, HeaderDefinition, default_include_dir
 from .reader import (
     ExternalRDW,
@@ -18,6 +18,7 @@ from .reader import (
 __all__ = [
     "ExternalRDW",
     "HeaderCatalog",
+    "HeaderCatalogError",
     "HeaderDefinition",
     "SMFError",
     "SMFHeader",

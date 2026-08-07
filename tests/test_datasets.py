@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 import struct
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from smf_parser import TruncatedSMFRecord, ZOAUMissingError, read_dataset, read_dataset_records
+from smf_parser import HeaderCatalog, TruncatedSMFRecord, ZOAUMissingError, read_dataset, read_dataset_records
 
 
 def ebcdic(value: str) -> bytes:
@@ -65,19 +67,28 @@ def false_type_0_candidate() -> bytes:
     return header + (b"\0" * (length - len(header)))
 
 
+def header_catalog(*record_types: int) -> HeaderCatalog:
+    with TemporaryDirectory() as include_dir:
+        lines = [f"/* SMF record type {record_type} */" for record_type in record_types]
+        lines.append("struct smfrcd_fixture { int smf_len; };\n")
+        Path(include_dir, "ifasmfr.h").write_text("\n".join(lines), encoding="utf-8")
+        return HeaderCatalog.discover(include_dir)
+
+
 class DatasetReaderTests(unittest.TestCase):
     def test_reads_dataset_records_that_are_smf_records(self) -> None:
-        records = list(read_dataset_records([standard_record(30, subtype=2)]))
+        records = list(read_dataset_records([standard_record(30, subtype=2)], header_catalog=header_catalog(30)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
         self.assertEqual(records[0].subtype, 2)
         self.assertIsNone(records[0].rdw)
+        self.assertEqual(records[0].c_headers[0].name, "ifasmfr.h")
 
     def test_reassembles_smf_records_split_across_dataset_records(self) -> None:
         smf_record = standard_record(30, subtype=2, body=b"a" * 2000)
 
-        records = list(read_dataset_records([smf_record[:1408], smf_record[1408:]]))
+        records = list(read_dataset_records([smf_record[:1408], smf_record[1408:]], header_catalog=header_catalog(30)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -89,7 +100,7 @@ class DatasetReaderTests(unittest.TestCase):
         second = standard_record(30, subtype=2)
         chunks = [first[:1408], first[1408:] + (b"\0" * 14) + second]
 
-        records = list(read_dataset_records(chunks))
+        records = list(read_dataset_records(chunks, header_catalog=header_catalog(30, 61)))
 
         self.assertEqual([record.record_type for record in records], [61, 30])
         self.assertEqual(records[1].offset, len(first) + 14)
@@ -97,7 +108,7 @@ class DatasetReaderTests(unittest.TestCase):
     def test_skips_false_record_candidates_while_resynchronizing(self) -> None:
         valid = standard_record(30, subtype=2)
 
-        records = list(read_dataset_records([false_record_candidate() + valid]))
+        records = list(read_dataset_records([false_record_candidate() + valid], header_catalog=header_catalog(30)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -106,7 +117,7 @@ class DatasetReaderTests(unittest.TestCase):
     def test_skips_false_type_0_candidates_with_impossible_lengths(self) -> None:
         valid = standard_record(30, subtype=2)
 
-        records = list(read_dataset_records([false_type_0_candidate() + valid]))
+        records = list(read_dataset_records([false_type_0_candidate() + valid], header_catalog=header_catalog(30)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -116,7 +127,7 @@ class DatasetReaderTests(unittest.TestCase):
         false = standard_record(1, subtype=50372, system_id="YCPU", body=b"payload")
         valid = standard_record(30, subtype=2, system_id="DBRA")
 
-        records = list(read_dataset_records([false + valid], system_ids={"DBRA"}))
+        records = list(read_dataset_records([false + valid], header_catalog=header_catalog(30), system_ids={"DBRA"}))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -127,7 +138,7 @@ class DatasetReaderTests(unittest.TestCase):
         smf_record = standard_record(14, body=b"payload")
         dataset_record = struct.pack(">HH", len(smf_record) + 4, 0) + smf_record
 
-        records = list(read_dataset_records([dataset_record]))
+        records = list(read_dataset_records([dataset_record], header_catalog=header_catalog(14)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 14)
@@ -136,7 +147,7 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].offset, 4)
 
     def test_skips_short_dataset_records_by_default(self) -> None:
-        records = list(read_dataset_records([b"\0\0\0\0", standard_record(30)]))
+        records = list(read_dataset_records([b"\0\0\0\0", standard_record(30)], header_catalog=header_catalog(30)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -144,7 +155,7 @@ class DatasetReaderTests(unittest.TestCase):
 
     def test_can_fail_on_short_dataset_records(self) -> None:
         with self.assertRaises(TruncatedSMFRecord):
-            list(read_dataset_records([b"\0\0\0\0"], skip_short_records=False))
+            list(read_dataset_records([b"\0\0\0\0"], skip_short_records=False, header_catalog=header_catalog(30)))
 
     def test_read_dataset_uses_zoau_read_as_bytes_lazily(self) -> None:
         calls: list[tuple[str, int, int, bool]] = []
@@ -156,7 +167,16 @@ class DatasetReaderTests(unittest.TestCase):
         fake_datasets = SimpleNamespace(read_as_bytes=read_as_bytes)
 
         with patch("smf_parser.datasets.import_module", return_value=fake_datasets):
-            parsed = list(read_dataset("USER.SMF.UNLOAD", records=10, offset=3, tail=True, system_ids={"DBRA"}))
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD",
+                    records=10,
+                    offset=3,
+                    tail=True,
+                    header_catalog=header_catalog(2),
+                    system_ids={"DBRA"},
+                )
+            )
 
         self.assertEqual([record.record_type for record in parsed], [2])
         self.assertEqual(calls, [("USER.SMF.UNLOAD", 10, 3, True)])

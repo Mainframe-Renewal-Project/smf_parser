@@ -2,15 +2,16 @@
 
 Python tools for reading and interpreting z/OS SMF unloads.
 
-The first API layer handles SMF record boundaries, standard and extended SMF
-headers, EBCDIC fixed-width text fields, and discovery of the retained z/OS C
-headers that can back generated record-specific wrappers.
+Parsing requires the z/OS C SMF headers. By default, `smf_parser` discovers
+headers from `/usr/include/zos`; set `SMF_PARSER_ZOS_INCLUDE` or pass an
+explicit `HeaderCatalog` to use another directory. Records without matching C
+header definitions are not yielded.
 
 ```python
 from smf_parser import HeaderCatalog, read_file
 
 for record in read_file("smf.unload"):
-    print(record.record_type, record.subtype, record.header.system_id_text)
+  print(record.record_type, record.subtype, record.header.system_id_text, record.c_headers)
 
 catalog = HeaderCatalog.discover()
 print(catalog.for_record_type(92))
@@ -23,7 +24,7 @@ datasets. ZOAU is optional and is not declared as a package dependency because
 ```python
 from smf_parser import read_dataset
 
-for record in read_dataset("USER.SMF.UNLOAD(0)"):
+for record in read_dataset("USER.SMF.UNLOAD(0)", system_ids={"DBRA"}):
     print(record.record_type, record.subtype)
 ```
 

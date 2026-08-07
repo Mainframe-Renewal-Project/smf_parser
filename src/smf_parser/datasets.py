@@ -6,7 +6,8 @@ from collections.abc import Collection, Iterable, Iterator
 from importlib import import_module
 from typing import Literal
 
-from .errors import SMFParseError, ZOAUMissingError
+from .errors import HeaderCatalogError, SMFParseError, ZOAUMissingError
+from .headers import HeaderCatalog
 from .reader import (
     ExternalRDW,
     RecordFormat,
@@ -28,6 +29,7 @@ def read_dataset(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
+    header_catalog: HeaderCatalog | None = None,
     system_ids: Collection[str] | None = None,
     records: int = 0,
     offset: int = 0,
@@ -45,6 +47,7 @@ def read_dataset(
         dataset_records,
         record_format=record_format,
         skip_short_records=skip_short_records,
+        header_catalog=header_catalog,
         system_ids=system_ids,
     )
 
@@ -54,6 +57,7 @@ def read_dataset_records(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
+    header_catalog: HeaderCatalog | None = None,
     system_ids: Collection[str] | None = None,
 ) -> Iterator[SMFRecord]:
     """Yield SMF records from dataset records returned by ZOAU.
@@ -68,11 +72,14 @@ def read_dataset_records(
     fail on them instead.
     """
 
+    catalog = _require_header_catalog(header_catalog)
+
     if record_format in ("auto", "smf"):
         yield from _read_smf_dataset_records(
             records,
             record_format=record_format,
             skip_short_records=skip_short_records,
+            header_catalog=catalog,
             system_ids=system_ids,
         )
         return
@@ -85,7 +92,7 @@ def read_dataset_records(
         if skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
             logical_offset += len(data)
             continue
-        yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset)
+        yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset, header_catalog=catalog)
         logical_offset += len(data)
 
 
@@ -113,6 +120,7 @@ def _read_smf_dataset_records(
     *,
     record_format: Literal["auto", "smf"],
     skip_short_records: bool,
+    header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
 ) -> Iterator[SMFRecord]:
     buffer = bytearray()
@@ -126,7 +134,7 @@ def _read_smf_dataset_records(
 
         selected_format = _detect_dataset_record_format(data) if record_format == "auto" and not buffer else "smf"
         if selected_format == "rdw":
-            yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset)
+            yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset, header_catalog=header_catalog)
             logical_offset += len(data)
             continue
 
@@ -137,6 +145,7 @@ def _read_smf_dataset_records(
             buffer,
             buffer_offset=buffer_offset,
             skip_invalid_records=skip_short_records,
+            header_catalog=header_catalog,
             system_ids=system_ids,
         )
         buffer_offset = logical_offset + len(data) - len(buffer)
@@ -154,6 +163,7 @@ def _drain_smf_buffer(
     *,
     buffer_offset: int,
     skip_invalid_records: bool,
+    header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
 ) -> Iterator[SMFRecord]:
     consumed = 0
@@ -168,7 +178,11 @@ def _drain_smf_buffer(
             consumed += 1
             continue
         if record_length > len(buffer):
-            if skip_invalid_records and _has_complete_candidate_after_first_byte(buffer, system_ids=system_ids):
+            if skip_invalid_records and _has_complete_candidate_after_first_byte(
+                buffer,
+                header_catalog=header_catalog,
+                system_ids=system_ids,
+            ):
                 del buffer[0]
                 consumed += 1
                 continue
@@ -184,13 +198,21 @@ def _drain_smf_buffer(
             del buffer[0]
             consumed += 1
             continue
-        if not _is_plausible_smf_header(header, system_ids=system_ids):
+        header_definitions = header_catalog.for_record_type(header.record_type)
+        if not header_definitions or not _is_plausible_smf_header(header, system_ids=system_ids):
             if not skip_invalid_records:
+                if not header_definitions:
+                    raise HeaderCatalogError(f"no z/OS C header definition found for SMF record type {header.record_type}")
                 parse_header(data, offset=header_offset)
             del buffer[0]
             consumed += 1
             continue
-        yield SMFRecord(data=data, header=header, offset=header_offset)
+        yield SMFRecord(
+            data=data,
+            header=header,
+            offset=header_offset,
+            header_definitions=header_definitions,
+        )
         del buffer[:record_length]
         consumed += record_length
 
@@ -212,7 +234,12 @@ def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] |
     return header.subsystem_id is None or _is_plausible_identifier(header.subsystem_id, allow_blank=True)
 
 
-def _has_complete_candidate_after_first_byte(buffer: bytearray, *, system_ids: Collection[str] | None) -> bool:
+def _has_complete_candidate_after_first_byte(
+    buffer: bytearray,
+    *,
+    header_catalog: HeaderCatalog,
+    system_ids: Collection[str] | None,
+) -> bool:
     for index in range(1, len(buffer) - _MIN_SMF_RECORD_LENGTH + 1):
         record_length = int.from_bytes(buffer[index : index + 2], "big")
         if record_length & 0x8000:
@@ -225,9 +252,16 @@ def _has_complete_candidate_after_first_byte(buffer: bytearray, *, system_ids: C
             header = parse_header(bytes(buffer[index : index + record_length]))
         except SMFParseError:
             continue
-        if _is_plausible_smf_header(header, system_ids=system_ids):
+        if header_catalog.for_record_type(header.record_type) and _is_plausible_smf_header(header, system_ids=system_ids):
             return True
     return False
+
+
+def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatalog:
+    catalog = HeaderCatalog.discover() if header_catalog is None else header_catalog
+    if not catalog.headers:
+        raise HeaderCatalogError(f"no z/OS C headers found in {catalog.include_dir}")
+    return catalog
 
 
 def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
@@ -241,8 +275,8 @@ def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
     return all(character.isalnum() or character in "#$@_" for character in text)
 
 
-def _read_one_rdw_dataset_record(data: bytes, *, logical_offset: int) -> Iterator[SMFRecord]:
-    for record in read_records(data, record_format="rdw"):
+def _read_one_rdw_dataset_record(data: bytes, *, logical_offset: int, header_catalog: HeaderCatalog) -> Iterator[SMFRecord]:
+    for record in read_records(data, record_format="rdw", header_catalog=header_catalog):
         yield SMFRecord(
             data=record.data,
             header=record.header,
@@ -250,4 +284,5 @@ def _read_one_rdw_dataset_record(data: bytes, *, logical_offset: int) -> Iterato
             rdw=ExternalRDW(length=record.rdw.length, segment_descriptor=record.rdw.segment_descriptor)
             if record.rdw is not None
             else None,
+            header_definitions=record.header_definitions,
         )

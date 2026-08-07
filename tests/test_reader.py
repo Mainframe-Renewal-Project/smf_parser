@@ -6,7 +6,7 @@ import struct
 from tempfile import TemporaryDirectory
 import unittest
 
-from smf_parser import HeaderCatalog, SMFParseError, parse_header, read_records
+from smf_parser import HeaderCatalog, HeaderCatalogError, SMFParseError, parse_header, read_records
 
 
 def ebcdic(value: str) -> bytes:
@@ -62,6 +62,14 @@ def extended_v2_record(record_type: int, *, subtype: int = 0, body: bytes = b"")
     return standard_header + extended_header + body
 
 
+def header_catalog(*record_types: int) -> HeaderCatalog:
+    with TemporaryDirectory() as include_dir:
+        lines = [f"/* SMF record type {record_type} */" for record_type in record_types]
+        lines.append("struct smfrcd_fixture { int smf_len; };\n")
+        Path(include_dir, "ifasmfr.h").write_text("\n".join(lines), encoding="utf-8")
+        return HeaderCatalog.discover(include_dir)
+
+
 class ReaderTests(unittest.TestCase):
     def test_parse_standard_header(self) -> None:
         record = standard_record(30, subtype=5, body=b"payload")
@@ -90,17 +98,18 @@ class ReaderTests(unittest.TestCase):
         first = standard_record(2)
         second = standard_record(30, subtype=4, body=b"abc")
 
-        records = list(read_records(first + second))
+        records = list(read_records(first + second, header_catalog=header_catalog(2, 30)))
 
         self.assertEqual([record.record_type for record in records], [2, 30])
         self.assertEqual(records[1].body, b"abc")
         self.assertIsNone(records[0].rdw)
+        self.assertEqual(records[1].c_headers[0].name, "ifasmfr.h")
 
     def test_read_auto_external_rdw_records(self) -> None:
         record = standard_record(14, body=b"data")
         stream = struct.pack(">HH", len(record) + 4, 0) + record
 
-        records = list(read_records(BytesIO(stream)))
+        records = list(read_records(BytesIO(stream), header_catalog=header_catalog(14)))
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 14)
@@ -110,7 +119,11 @@ class ReaderTests(unittest.TestCase):
 
     def test_reject_invalid_record_length(self) -> None:
         with self.assertRaises(SMFParseError):
-            list(read_records(b"\0\x01\0\0"))
+            list(read_records(b"\0\x01\0\0", header_catalog=header_catalog(2)))
+
+    def test_rejects_records_without_matching_c_header(self) -> None:
+        with self.assertRaises(HeaderCatalogError):
+            list(read_records(standard_record(30), header_catalog=header_catalog(2)))
 
 
 class HeaderCatalogTests(unittest.TestCase):
