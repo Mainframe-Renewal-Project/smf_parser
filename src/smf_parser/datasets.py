@@ -29,6 +29,7 @@ DatasetRecordFormat = RecordFormat
 _MIN_SMF_RECORD_LENGTH = 18
 _MAX_SMF_RECORD_LENGTH = 32756
 _MAX_SMF_TIME_HUNDREDTHS = 24 * 60 * 60 * 100
+_MAX_PLAUSIBLE_SUBTYPE = 4096
 
 
 def read_dataset(
@@ -388,6 +389,8 @@ def _drain_smf_buffer(
 def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] | None) -> bool:
     if not 0 <= header.time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
         return False
+    if header.subtype is not None and header.subtype > _MAX_PLAUSIBLE_SUBTYPE:
+        return False
     if header.record_type_indicator == 126:
         if not header.has_extended_header or header.extended_record_type is None:
             return False
@@ -419,6 +422,12 @@ def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | N
     date = data[6:10] if date_first_header else data[10:14]
     system_id = data[10:14] if date_first_header else data[14:18]
     subsystem_id = data[14:18] if date_first_header else data[18:22]
+    if data[4] & 0x40:
+        subtype_offset = 18 if date_first_header else 22
+        if len(data) >= subtype_offset + 2:
+            subtype = int.from_bytes(data[subtype_offset : subtype_offset + 2], "big")
+            if subtype > _MAX_PLAUSIBLE_SUBTYPE:
+                return False
     if not _is_plausible_smf_date(date):
         return False
     if not _is_plausible_identifier(system_id, allow_blank=False):
