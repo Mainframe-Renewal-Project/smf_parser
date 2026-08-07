@@ -84,6 +84,11 @@ def incomplete_record_with_embedded_supported_candidate() -> bytes:
     return struct.pack(">H", 32756) + (b"x" * 16) + embedded
 
 
+def invalid_length_with_embedded_supported_candidate() -> bytes:
+    embedded = standard_record(1, system_id="YCPU")
+    return struct.pack(">H", 2) + (b"x" * 16) + embedded
+
+
 def header_catalog(*record_types: int) -> HeaderCatalog:
     include_dir = Path("/compiled/zos")
     return HeaderCatalog(
@@ -104,25 +109,21 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertIsNone(records[0].rdw)
         self.assertEqual(records[0].c_headers[0].name, "ifasmfr.h")
 
-    def test_reassembles_smf_records_split_across_dataset_records(self) -> None:
+    def test_skips_incomplete_dataset_chunks_by_default(self) -> None:
         smf_record = standard_record(30, subtype=2, body=b"a" * 2000)
 
         records = list(read_dataset_records([smf_record[:1408], smf_record[1408:]], header_catalog=header_catalog(30)))
 
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].record_type, 30)
-        self.assertEqual(records[0].subtype, 2)
-        self.assertEqual(records[0].data, smf_record)
+        self.assertEqual(records, [])
 
-    def test_skips_padding_between_reassembled_smf_records(self) -> None:
-        first = standard_record(61, body=b"a" * 2000)
-        second = standard_record(30, subtype=2)
-        chunks = [first[:1408], first[1408:] + (b"\0" * 14) + second]
+    def test_skips_zero_padding_before_aligned_smf_record(self) -> None:
+        record = standard_record(30, subtype=2)
+        chunks = [(b"\0" * 14) + record]
 
-        records = list(read_dataset_records(chunks, header_catalog=header_catalog(30, 61)))
+        records = list(read_dataset_records(chunks, header_catalog=header_catalog(30)))
 
-        self.assertEqual([record.record_type for record in records], [61, 30])
-        self.assertEqual(records[1].offset, len(first) + 14)
+        self.assertEqual([record.record_type for record in records], [30])
+        self.assertEqual(records[0].offset, 14)
 
     def test_skips_false_record_candidates_while_resynchronizing(self) -> None:
         valid = standard_record(30, subtype=2)
@@ -156,6 +157,16 @@ class DatasetReaderTests(unittest.TestCase):
         records = list(
             read_dataset_records(
                 [incomplete_record_with_embedded_supported_candidate()],
+                header_catalog=header_catalog(1),
+            )
+        )
+
+        self.assertEqual(records, [])
+
+    def test_does_not_scan_after_invalid_nonzero_length(self) -> None:
+        records = list(
+            read_dataset_records(
+                [invalid_length_with_embedded_supported_candidate()],
                 header_catalog=header_catalog(1),
             )
         )

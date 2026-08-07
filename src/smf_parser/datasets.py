@@ -121,39 +121,30 @@ def _read_smf_dataset_records(
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
 ) -> Iterator[SMFRecord]:
-    buffer = bytearray()
-    buffer_offset = 0
     logical_offset = 0
 
     for data in records:
-        if not buffer and skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
+        if skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
             logical_offset += len(data)
             continue
 
-        selected_format = _detect_dataset_record_format(data) if record_format == "auto" and not buffer else "smf"
+        selected_format = _detect_dataset_record_format(data) if record_format == "auto" else "smf"
         if selected_format == "rdw":
             yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset, header_catalog=header_catalog)
             logical_offset += len(data)
             continue
 
-        if not buffer:
-            buffer_offset = logical_offset
-        buffer.extend(data)
+        buffer = bytearray(data)
         yield from _drain_smf_buffer(
             buffer,
-            buffer_offset=buffer_offset,
+            buffer_offset=logical_offset,
             skip_invalid_records=skip_short_records,
             header_catalog=header_catalog,
             system_ids=system_ids,
         )
-        buffer_offset = logical_offset + len(data) - len(buffer)
+        if buffer and not skip_short_records:
+            parse_header(bytes(buffer), offset=logical_offset + len(data) - len(buffer))
         logical_offset += len(data)
-
-    if not buffer:
-        return
-    if skip_short_records:
-        return
-    parse_header(bytes(buffer), offset=buffer_offset)
 
 
 def _drain_smf_buffer(
@@ -169,13 +160,20 @@ def _drain_smf_buffer(
         record_length = int.from_bytes(buffer[0:2], "big")
         if record_length & 0x8000:
             record_length &= 0x7FFF
-        if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
-            if not skip_invalid_records:
-                parse_header(bytes(buffer), offset=buffer_offset + consumed)
+        if record_length == 0:
             del buffer[0]
             consumed += 1
             continue
+        if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
+            if not skip_invalid_records:
+                parse_header(bytes(buffer), offset=buffer_offset + consumed)
+            consumed += len(buffer)
+            del buffer[:]
+            return
         if record_length > len(buffer):
+            if not skip_invalid_records:
+                parse_header(bytes(buffer), offset=buffer_offset + consumed)
+            del buffer[:]
             break
 
         data = bytes(buffer[:record_length])
@@ -185,8 +183,8 @@ def _drain_smf_buffer(
         except SMFParseError:
             if not skip_invalid_records:
                 raise
-            del buffer[0]
-            consumed += 1
+            del buffer[:record_length]
+            consumed += record_length
             continue
         header_definitions = header_catalog.for_record_type(header.record_type)
         if not header_definitions or not _is_plausible_smf_header(header, system_ids=system_ids):
