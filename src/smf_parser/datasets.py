@@ -20,7 +20,6 @@ DatasetRecordFormat = RecordFormat
 _MIN_SMF_RECORD_LENGTH = 18
 _MAX_SMF_RECORD_LENGTH = 32756
 _MAX_SMF_TIME_HUNDREDTHS = 24 * 60 * 60 * 100
-_SMF_TYPE_0_LENGTHS = frozenset((74, 82, 87))
 
 
 def read_dataset(
@@ -218,8 +217,6 @@ def _drain_smf_buffer(
 
 def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] | None) -> bool:
     if not 0 <= header.time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
-        return False
-    if header.record_type == 0 and header.length not in _SMF_TYPE_0_LENGTHS:
         return False
     if header.record_type_indicator == 126:
         if not header.has_extended_header or header.extended_record_type is None:

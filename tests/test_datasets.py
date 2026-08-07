@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import struct
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import struct
-from tempfile import TemporaryDirectory
-import unittest
 from unittest.mock import patch
 
-from smf_parser import HeaderCatalog, TruncatedSMFRecord, ZOAUMissingError, read_dataset, read_dataset_records
+from smf_parser import (
+    HeaderCatalog,
+    HeaderDefinition,
+    TruncatedSMFRecord,
+    ZOAUMissingError,
+    read_dataset,
+    read_dataset_records,
+)
 
 
 def ebcdic(value: str) -> bytes:
@@ -68,11 +74,13 @@ def false_type_0_candidate() -> bytes:
 
 
 def header_catalog(*record_types: int) -> HeaderCatalog:
-    with TemporaryDirectory() as include_dir:
-        lines = [f"/* SMF record type {record_type} */" for record_type in record_types]
-        lines.append("struct smfrcd_fixture { int smf_len; };\n")
-        Path(include_dir, "ifasmfr.h").write_text("\n".join(lines), encoding="utf-8")
-        return HeaderCatalog.discover(include_dir)
+    include_dir = Path("/compiled/zos")
+    return HeaderCatalog(
+        include_dir=include_dir,
+        headers=(
+            HeaderDefinition(name="ifasmfr.h", path=include_dir / "ifasmfr.h", record_types=record_types, generic=False),
+        ),
+    )
 
 
 class DatasetReaderTests(unittest.TestCase):
@@ -114,7 +122,7 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].record_type, 30)
         self.assertEqual(records[0].offset, len(false_record_candidate()))
 
-    def test_skips_false_type_0_candidates_with_impossible_lengths(self) -> None:
+    def test_skips_candidates_without_compiled_record_header(self) -> None:
         valid = standard_record(30, subtype=2)
 
         records = list(read_dataset_records([false_type_0_candidate() + valid], header_catalog=header_catalog(30)))
@@ -182,9 +190,11 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(calls, [("USER.SMF.UNLOAD", 10, 3, True)])
 
     def test_read_dataset_reports_missing_zoau(self) -> None:
-        with patch("smf_parser.datasets.import_module", side_effect=ImportError("no zoau")):
-            with self.assertRaises(ZOAUMissingError):
-                list(read_dataset("USER.SMF.UNLOAD"))
+        with (
+            patch("smf_parser.datasets.import_module", side_effect=ImportError("no zoau")),
+            self.assertRaises(ZOAUMissingError),
+        ):
+            list(read_dataset("USER.SMF.UNLOAD"))
 
 
 if __name__ == "__main__":

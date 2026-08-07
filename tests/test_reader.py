@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import struct
+import unittest
 from io import BytesIO
 from pathlib import Path
-import struct
-from tempfile import TemporaryDirectory
-import unittest
+from unittest.mock import patch
 
-from smf_parser import HeaderCatalog, HeaderCatalogError, SMFParseError, parse_header, read_records
+from smf_parser import (
+    HeaderCatalog,
+    HeaderCatalogError,
+    HeaderDefinition,
+    SMFParseError,
+    parse_header,
+    read_records,
+)
 
 
 def ebcdic(value: str) -> bytes:
@@ -63,11 +70,13 @@ def extended_v2_record(record_type: int, *, subtype: int = 0, body: bytes = b"")
 
 
 def header_catalog(*record_types: int) -> HeaderCatalog:
-    with TemporaryDirectory() as include_dir:
-        lines = [f"/* SMF record type {record_type} */" for record_type in record_types]
-        lines.append("struct smfrcd_fixture { int smf_len; };\n")
-        Path(include_dir, "ifasmfr.h").write_text("\n".join(lines), encoding="utf-8")
-        return HeaderCatalog.discover(include_dir)
+    include_dir = Path("/compiled/zos")
+    return HeaderCatalog(
+        include_dir=include_dir,
+        headers=(
+            HeaderDefinition(name="ifasmfr.h", path=include_dir / "ifasmfr.h", record_types=record_types, generic=False),
+        ),
+    )
 
 
 class ReaderTests(unittest.TestCase):
@@ -128,16 +137,17 @@ class ReaderTests(unittest.TestCase):
 
 class HeaderCatalogTests(unittest.TestCase):
     def test_discovers_retained_c_headers(self) -> None:
-        with TemporaryDirectory() as include_dir:
-            Path(include_dir, "ifasmfh.h").write_text(
-                "/* SMF record type 92 */\nstruct smfhdr { int smfhdr_len; };\n",
-                encoding="utf-8",
-            )
-
+        include_dir = Path("/compiled/zos")
+        definition = HeaderDefinition(
+            name="ifasmfh.h",
+            path=include_dir / "ifasmfh.h",
+            record_types=(92,),
+            generic=False,
+        )
+        with patch("smf_parser.headers._compiled_headers", return_value=(include_dir, (definition,))):
             catalog = HeaderCatalog.discover(include_dir)
 
         self.assertIsNotNone(catalog.by_name("ifasmfh"))
-        self.assertIn("smfhdr", catalog.by_name("ifasmfh").structs)
         self.assertTrue(any(header.name == "ifasmfh.h" for header in catalog.for_record_type(92)))
 
 

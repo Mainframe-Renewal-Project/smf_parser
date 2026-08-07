@@ -1,20 +1,13 @@
-"""Lightweight catalog for the retained z/OS C SMF headers."""
+"""Catalog for z/OS C SMF headers compiled into this package."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from importlib import import_module
 from os import environ
 from pathlib import Path
 
 from .errors import HeaderCatalogError
-
-_STRUCT_PATTERN = re.compile(r"\bstruct\s+([A-Za-z_]\w*)\s*\{")
-_RECORD_TYPE_PATTERNS = (
-    re.compile(r"\bSMF\s+record\s+type\s+(\d+)", re.IGNORECASE),
-    re.compile(r"\bRECORD\s+TYPE\s+(\d+)", re.IGNORECASE),
-    re.compile(r"\bSMF(\d{1,4})\b", re.IGNORECASE),
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,8 +16,8 @@ class HeaderDefinition:
 
     name: str
     path: Path
-    structs: tuple[str, ...]
     record_types: tuple[int, ...]
+    generic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +30,11 @@ class HeaderCatalog:
     @classmethod
     def discover(cls, include_dir: str | Path | None = None) -> HeaderCatalog:
         root = Path(include_dir) if include_dir is not None else default_include_dir()
-        definitions = tuple(_read_header(path) for path in sorted(root.glob("*.h")))
+        compiled_include_dir, definitions = _compiled_headers()
+        if root != compiled_include_dir:
+            raise HeaderCatalogError(
+                f"smf_parser was built against z/OS C headers in {compiled_include_dir}, not {root}"
+            )
         if not definitions:
             raise HeaderCatalogError(f"no z/OS C headers found in {root}")
         return cls(include_dir=root, headers=definitions)
@@ -50,10 +47,10 @@ class HeaderCatalog:
         return None
 
     def for_record_type(self, record_type: int) -> tuple[HeaderDefinition, ...]:
-        return tuple(header for header in self.headers if record_type in header.record_types)
+        return tuple(header for header in self.headers if header.generic or record_type in header.record_types)
 
     def structs(self) -> tuple[str, ...]:
-        return tuple(struct for header in self.headers for struct in header.structs)
+        return ()
 
 
 def default_include_dir() -> Path:
@@ -65,18 +62,23 @@ def default_include_dir() -> Path:
     return Path("/usr/include/zos")
 
 
-def _read_header(path: Path) -> HeaderDefinition:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    structs = tuple(dict.fromkeys(_STRUCT_PATTERN.findall(text)))
-    record_types = tuple(sorted(_record_types(text, path.stem)))
-    return HeaderDefinition(name=path.name, path=path, structs=structs, record_types=record_types)
+def _compiled_headers() -> tuple[Path, tuple[HeaderDefinition, ...]]:
+    try:
+        manifest = import_module("._compiled_headers", package=__package__)
+    except ImportError as error:
+        raise HeaderCatalogError(
+            "smf_parser was not built with compiled z/OS C headers; rebuild it on z/OS "
+            "with SMF_PARSER_ZOS_INCLUDE pointing at the header directory"
+        ) from error
 
-
-def _record_types(text: str, stem: str) -> set[int]:
-    values: set[int] = set()
-    for pattern in _RECORD_TYPE_PATTERNS:
-        for match in pattern.finditer(text):
-            values.add(int(match.group(1)))
-    for match in re.finditer(r"smf(\d{1,4})", stem, flags=re.IGNORECASE):
-        values.add(int(match.group(1)))
-    return values
+    include_dir = Path(manifest.INCLUDE_DIR)
+    definitions = tuple(
+        HeaderDefinition(
+            name=entry["name"],
+            path=include_dir / entry["name"],
+            record_types=tuple(entry.get("record_types", ())),
+            generic=bool(entry.get("generic", False)),
+        )
+        for entry in manifest.HEADERS
+    )
+    return include_dir, definitions

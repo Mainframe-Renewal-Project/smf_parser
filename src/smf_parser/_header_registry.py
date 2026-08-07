@@ -1,0 +1,46 @@
+"""z/OS SMF C headers that setup.py is expected to compile."""
+
+from __future__ import annotations
+
+# ``generic=True`` means the compiled header backs generic SMF record boundary
+# and common-header parsing. Type-specific wrappers can be added from the same
+# registry without changing the runtime discovery contract.
+HEADER_TARGETS = (
+    {"name": "ifasmfh.h", "record_types": (), "generic": True},
+    {"name": "ifasmfr.h", "record_types": (), "generic": True},
+    {"name": "ifasmfr1.h", "record_types": (1,), "generic": False},
+    {"name": "ifasmfr2.h", "record_types": (2,), "generic": False},
+    {"name": "ifasmfr3.h", "record_types": (3,), "generic": False},
+    {"name": "ifasmfr4.h", "record_types": (4,), "generic": False},
+    {"name": "ifasmfr5.h", "record_types": (5,), "generic": False},
+    {"name": "ifasmfr9.h", "record_types": (9,), "generic": False},
+    {"name": "ifasmfra.h", "record_types": (10,), "generic": False},
+    {"name": "ifgsmf14.h", "record_types": (14,), "generic": False},
+    {"name": "iggsmf17.h", "record_types": (17,), "generic": False},
+    {"name": "iggsmf18.h", "record_types": (18,), "generic": False},
+    {"name": "iggsmf19.h", "record_types": (19,), "generic": False},
+    {"name": "igesmf21.h", "record_types": (21,), "generic": False},
+    {"name": "iazsmf24.h", "record_types": (24,), "generic": False},
+    {"name": "iazsmf25.h", "record_types": (25,), "generic": False},
+    {"name": "iazsmf26.h", "record_types": (26,), "generic": False},
+    {"name": "iazsmf43.h", "record_types": (43,), "generic": False},
+    {"name": "iazsmf45.h", "record_types": (45,), "generic": False},
+    {"name": "iazsmf47.h", "record_types": (47,), "generic": False},
+    {"name": "iazsmf48.h", "record_types": (48,), "generic": False},
+    {"name": "iazsmf49.h", "record_types": (49,), "generic": False},
+    {"name": "iazsmf52.h", "record_types": (52,), "generic": False},
+    {"name": "iazsmf53.h", "record_types": (53,), "generic": False},
+    {"name": "iazsmf54.h", "record_types": (54,), "generic": False},
+    {"name": "iazsmf55.h", "record_types": (55,), "generic": False},
+    {"name": "iazsmf56.h", "record_types": (56,), "generic": False},
+    {"name": "iazsmf57.h", "record_types": (57,), "generic": False},
+    {"name": "iazsmf58.h", "record_types": (58,), "generic": False},
+    {"name": "idasmf62.h", "record_types": (62,), "generic": False},
+    {"name": "idasmf64.h", "record_types": (64,), "generic": False},
+    {"name": "iazsmf84.h", "record_types": (84,), "generic": False},
+    {"name": "ifbsmf90.h", "record_types": (90,), "generic": False},
+    {"name": "iecsmf94.h", "record_types": (94,), "generic": False},
+    {"name": "iosds124.h", "record_types": (124,), "generic": False},
+    {"name": "iosds983.h", "record_types": (983,), "generic": False},
+    {"name": "iosds984.h", "record_types": (984,), "generic": False},
+)
