@@ -57,6 +57,12 @@ def read_dataset(
             offset=offset,
             tail=tail,
         )
+        yield from _read_native_vbs_smf_records(
+            dataset_records,
+            header_catalog=header_catalog,
+            system_ids=system_ids,
+        )
+        return
     else:
         dataset_records = datasets.read_as_bytes(dataset_name, records=records, offset=offset, tail=tail)
     yield from read_dataset_records(
@@ -192,6 +198,23 @@ def _read_native_vbs_dataset_records(
     return read_vbs_dataset(resolved_dataset_name, records=records, offset=offset, tail=tail)
 
 
+def _read_native_vbs_smf_records(
+    records: Iterable[bytes],
+    *,
+    header_catalog: HeaderCatalog | None,
+    system_ids: Collection[str] | None,
+) -> Iterator[SMFRecord]:
+    yield from _read_smf_dataset_records(
+        records,
+        record_format="smf",
+        skip_short_records=False,
+        header_catalog=_require_header_catalog(header_catalog),
+        system_ids=system_ids,
+        split_on_record_start=False,
+        trusted_record_boundaries=True,
+    )
+
+
 def _resolve_relative_gdg_name(dataset_name: str, entries) -> str:
     if "(" not in dataset_name or not dataset_name.endswith(")"):
         return dataset_name
@@ -249,6 +272,8 @@ def _read_smf_dataset_records(
     skip_short_records: bool,
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
+    split_on_record_start: bool = True,
+    trusted_record_boundaries: bool = False,
 ) -> Iterator[SMFRecord]:
     logical_offset = 0
     buffer = bytearray()
@@ -265,7 +290,7 @@ def _read_smf_dataset_records(
             logical_offset += len(data)
             continue
 
-        if buffer and _looks_like_smf_record_start(data, system_ids=system_ids):
+        if split_on_record_start and buffer and _looks_like_smf_record_start(data, system_ids=system_ids):
             if not skip_short_records:
                 parse_header(bytes(buffer), offset=buffer_offset)
             buffer.clear()
@@ -279,6 +304,7 @@ def _read_smf_dataset_records(
             skip_invalid_records=skip_short_records,
             header_catalog=header_catalog,
             system_ids=system_ids,
+            trusted_record_boundaries=trusted_record_boundaries,
         )
         logical_offset += len(data)
 
@@ -293,6 +319,7 @@ def _drain_smf_buffer(
     skip_invalid_records: bool,
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
+    trusted_record_boundaries: bool = False,
 ) -> Iterator[SMFRecord]:
     consumed = 0
     while len(buffer) >= _MIN_SMF_RECORD_LENGTH:
@@ -310,7 +337,7 @@ def _drain_smf_buffer(
             del buffer[:]
             return
         if record_length > len(buffer):
-            if not skip_invalid_records:
+            if not skip_invalid_records and not trusted_record_boundaries:
                 parse_header(bytes(buffer), offset=buffer_offset + consumed)
             break
 
@@ -321,16 +348,24 @@ def _drain_smf_buffer(
         except SMFParseError:
             if not skip_invalid_records:
                 raise
-            del buffer[:]
-            return
+            if not trusted_record_boundaries:
+                del buffer[:]
+                return
+            del buffer[:record_length]
+            consumed += record_length
+            continue
         header_definitions = header_catalog.for_record_type(header.record_type)
         if not header_definitions or not _is_plausible_smf_header(header, system_ids=system_ids):
             if not skip_invalid_records:
                 if not header_definitions:
                     raise HeaderCatalogError(f"no z/OS C header definition found for SMF record type {header.record_type}")
                 parse_header(data, offset=header_offset)
-            del buffer[:]
-            return
+            if not trusted_record_boundaries:
+                del buffer[:]
+                return
+            del buffer[:record_length]
+            consumed += record_length
+            continue
         yield SMFRecord(
             data=data,
             header=header,
