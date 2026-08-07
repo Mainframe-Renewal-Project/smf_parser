@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Iterator
 from importlib import import_module
+from typing import cast
 
 from .errors import (
     HeaderCatalogError,
@@ -155,7 +156,10 @@ def _zoau_gdg_generations(base: str):
 
     generation_data_group_view = gdgs.GenerationDataGroupView
     generation_data_group = generation_data_group_view(base)
-    return tuple(generation_data_group.generations())
+    generations = generation_data_group.generations
+    if callable(generations):
+        generations = generations()
+    return tuple(cast(Iterable[object], generations))
 
 
 def _is_relative_gdg_name(dataset_name: str) -> bool:

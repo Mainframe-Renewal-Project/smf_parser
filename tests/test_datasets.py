@@ -262,7 +262,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=lambda: [SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
             )
         )
 
@@ -287,7 +287,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=lambda: [
+                generations=[
                     SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS"),
                     SimpleNamespace(name=f"{base}.G0002V00", record_format="VBS"),
                     SimpleNamespace(name=f"{base}.G0003V00", record_format="VBS"),
