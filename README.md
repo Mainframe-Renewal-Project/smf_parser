@@ -1,4 +1,4 @@
-# smf_parser
+# pySMF
 
 Python tools for reading and interpreting z/OS SMF unloads.
 
@@ -18,7 +18,7 @@ At runtime, generic SMF header parsing uses the native extension and
 build. Records are not yielded unless compiled C header support is available.
 
 ```python
-from smf_parser import HeaderCatalog, read_file
+from pysmf import HeaderCatalog, read_file
 
 for record in read_file("smf.unload"):
     print(record.record_type, record.subtype, record.header.system_id_text, record.c_headers)
@@ -32,7 +32,7 @@ datasets. ZOAU is optional and is not declared as a package dependency because
 `zoautil_py` is not distributed on PyPI.
 
 ```python
-from smf_parser import read_dataset
+from pysmf import read_dataset
 
 for record in read_dataset("USER.SMF.UNLOAD(0)", system_ids={"DBRA"}):
     print(record.record_type, record.subtype)
