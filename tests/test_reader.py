@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 import struct
+from tempfile import TemporaryDirectory
 import unittest
 
 from smf_parser import HeaderCatalog, SMFParseError, parse_header, read_records
@@ -113,11 +115,17 @@ class ReaderTests(unittest.TestCase):
 
 class HeaderCatalogTests(unittest.TestCase):
     def test_discovers_retained_c_headers(self) -> None:
-        catalog = HeaderCatalog.discover()
+        with TemporaryDirectory() as include_dir:
+            Path(include_dir, "ifasmfh.h").write_text(
+                "/* SMF record type 92 */\nstruct smfhdr { int smfhdr_len; };\n",
+                encoding="utf-8",
+            )
+
+            catalog = HeaderCatalog.discover(include_dir)
 
         self.assertIsNotNone(catalog.by_name("ifasmfh"))
         self.assertIn("smfhdr", catalog.by_name("ifasmfh").structs)
-        self.assertTrue(any(header.name == "bpxysmfr.h" for header in catalog.for_record_type(92)))
+        self.assertTrue(any(header.name == "ifasmfh.h" for header in catalog.for_record_type(92)))
 
 
 if __name__ == "__main__":

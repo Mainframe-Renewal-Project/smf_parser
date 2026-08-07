@@ -5,7 +5,7 @@ import struct
 import unittest
 from unittest.mock import patch
 
-from smf_parser import ZOAUMissingError, read_dataset, read_dataset_records
+from smf_parser import TruncatedSMFRecord, ZOAUMissingError, read_dataset, read_dataset_records
 
 
 def ebcdic(value: str) -> bytes:
@@ -51,6 +51,17 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].body, b"payload")
         self.assertIsNotNone(records[0].rdw)
         self.assertEqual(records[0].offset, 4)
+
+    def test_skips_short_dataset_records_by_default(self) -> None:
+        records = list(read_dataset_records([b"\0\0\0\0", standard_record(30)]))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].offset, 4)
+
+    def test_can_fail_on_short_dataset_records(self) -> None:
+        with self.assertRaises(TruncatedSMFRecord):
+            list(read_dataset_records([b"\0\0\0\0"], skip_short_records=False))
 
     def test_read_dataset_uses_zoau_read_as_bytes_lazily(self) -> None:
         calls: list[tuple[str, int, int, bool]] = []

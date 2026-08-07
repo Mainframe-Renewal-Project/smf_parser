@@ -23,9 +23,13 @@ datasets. ZOAU is optional and is not declared as a package dependency because
 ```python
 from smf_parser import read_dataset
 
-for record in read_dataset("USER.SMF.UNLOAD"):
+for record in read_dataset("USER.SMF.UNLOAD(0)"):
     print(record.record_type, record.subtype)
 ```
+
+For generation data groups, pass the relative or absolute generation data set
+name exactly as ZOAU expects it, such as `USER.SMF.UNLOAD(0)`,
+`USER.SMF.UNLOAD(-1)`, or `USER.SMF.UNLOAD.G0001V00`.
 
 `read_file()` and `read_records()` support two binary forms:
 

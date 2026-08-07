@@ -16,6 +16,7 @@ def read_dataset(
     dataset_name: str,
     *,
     record_format: DatasetRecordFormat = "auto",
+    skip_short_records: bool = True,
     records: int = 0,
     offset: int = 0,
     tail: bool = False,
@@ -28,19 +29,36 @@ def read_dataset(
 
     datasets = _zoau_datasets_module()
     dataset_records = datasets.read_as_bytes(dataset_name, records=records, offset=offset, tail=tail)
-    yield from read_dataset_records(dataset_records, record_format=record_format)
+    yield from read_dataset_records(
+        dataset_records,
+        record_format=record_format,
+        skip_short_records=skip_short_records,
+    )
 
 
-def read_dataset_records(records: Iterable[bytes], *, record_format: DatasetRecordFormat = "auto") -> Iterator[SMFRecord]:
+def read_dataset_records(
+    records: Iterable[bytes],
+    *,
+    record_format: DatasetRecordFormat = "auto",
+    skip_short_records: bool = True,
+) -> Iterator[SMFRecord]:
     """Yield SMF records from dataset records returned by ZOAU.
 
     ``zoautil_py.datasets.read_as_bytes`` returns one ``bytes`` value per dataset
     record. Depending on how the unload was produced, those bytes may already be
     the SMF record or may still include an external RDW.
+
+    Short records cannot contain the minimum SMF header. They are skipped by
+    default because some dataset reads can expose non-SMF physical/control
+    records before the logical SMF payload. Set ``skip_short_records=False`` to
+    fail on them instead.
     """
 
     logical_offset = 0
     for data in records:
+        if skip_short_records and len(data) < 18:
+            logical_offset += len(data)
+            continue
         selected_format = _detect_dataset_record_format(data) if record_format == "auto" else record_format
         if selected_format == "smf":
             header = parse_header(data, offset=logical_offset)
