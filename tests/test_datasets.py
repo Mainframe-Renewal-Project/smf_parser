@@ -257,16 +257,24 @@ class DatasetReaderTests(unittest.TestCase):
 
     def test_read_dataset_rejects_zoau_vbs_datasets(self) -> None:
         fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [
-                SimpleNamespace(name="USER.SMF.UNLOAD.G0001V00", record_format="VBS"),
-            ]
-            if pattern == "USER.SMF.UNLOAD.*"
-            else [],
+            list_datasets=lambda pattern: [],
             read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
         )
+        fake_gdgs = SimpleNamespace(
+            GenerationDataGroupView=lambda base: SimpleNamespace(
+                generations=lambda: [SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+            )
+        )
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "zoautil_py.gdgs":
+                return fake_gdgs
+            raise ImportError(name)
 
         with (
-            patch("smf_parser.datasets.import_module", return_value=fake_datasets),
+            patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect),
             self.assertRaises(ZOAUUnsupportedDatasetError),
         ):
             list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
@@ -274,12 +282,17 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
         calls: list[tuple[str, int, int, bool]] = []
         fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [
-                SimpleNamespace(name="USER.SMF.UNLOAD.G0001V00", record_format="VBS"),
-            ]
-            if pattern == "USER.SMF.UNLOAD.*"
-            else [],
+            list_datasets=lambda pattern: [],
             read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+        )
+        fake_gdgs = SimpleNamespace(
+            GenerationDataGroupView=lambda base: SimpleNamespace(
+                generations=lambda: [
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS"),
+                    SimpleNamespace(name=f"{base}.G0002V00", record_format="VBS"),
+                    SimpleNamespace(name=f"{base}.G0003V00", record_format="VBS"),
+                ]
+            )
         )
 
         def read_vbs_dataset(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
@@ -291,6 +304,8 @@ class DatasetReaderTests(unittest.TestCase):
         def import_module_side_effect(name: str):
             if name == "zoautil_py.datasets":
                 return fake_datasets
+            if name == "zoautil_py.gdgs":
+                return fake_gdgs
             if name == "smf_parser._native":
                 return fake_native
             raise ImportError(name)
@@ -308,7 +323,7 @@ class DatasetReaderTests(unittest.TestCase):
             )
 
         self.assertEqual([record.record_type for record in parsed], [2])
-        self.assertEqual(calls, [("USER.SMF.UNLOAD(-1)", 10, 3, True)])
+        self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True)])
 
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (

@@ -128,8 +128,10 @@ def _zoau_vbs_dataset_entries(datasets, dataset_name: str):
 
     entries = _list_zoau_dataset_metadata(list_datasets, dataset_name)
     if not entries:
-        base = dataset_name.split("(", maxsplit=1)[0]
-        entries = _list_zoau_dataset_metadata(list_datasets, f"{base}.*")
+        if not _is_relative_gdg_name(dataset_name):
+            return ()
+        base = dataset_name[:-1].split("(", maxsplit=1)[0]
+        entries = _zoau_gdg_generations(base)
     if not entries:
         return ()
 
@@ -141,6 +143,29 @@ def _zoau_vbs_dataset_entries(datasets, dataset_name: str):
     if record_formats == {"VBS"}:
         return entries
     return ()
+
+
+def _zoau_gdg_generations(base: str):
+    try:
+        gdgs = import_module("zoautil_py.gdgs")
+    except ImportError as error:
+        raise ZOAUMissingError(
+            "ZOAU gdgs support is required to resolve relative GDG names. Ensure zoautil_py.gdgs is importable."
+        ) from error
+
+    generation_data_group_view = gdgs.GenerationDataGroupView
+    generation_data_group = generation_data_group_view(base)
+    return tuple(generation_data_group.generations())
+
+
+def _is_relative_gdg_name(dataset_name: str) -> bool:
+    if "(" not in dataset_name or not dataset_name.endswith(")"):
+        return False
+    relative_text = dataset_name[:-1].split("(", maxsplit=1)[1]
+    try:
+        return int(relative_text) <= 0
+    except ValueError:
+        return False
 
 
 def _read_native_vbs_dataset_records(
@@ -159,7 +184,37 @@ def _read_native_vbs_dataset_records(
     read_vbs_dataset = getattr(native, "read_vbs_dataset", None)
     if read_vbs_dataset is None:
         raise _unsupported_vbs_dataset_error(dataset_name, entries)
-    return read_vbs_dataset(dataset_name, records=records, offset=offset, tail=tail)
+    resolved_dataset_name = _resolve_relative_gdg_name(dataset_name, entries)
+    return read_vbs_dataset(resolved_dataset_name, records=records, offset=offset, tail=tail)
+
+
+def _resolve_relative_gdg_name(dataset_name: str, entries) -> str:
+    if "(" not in dataset_name or not dataset_name.endswith(")"):
+        return dataset_name
+
+    base, relative_text = dataset_name[:-1].split("(", maxsplit=1)
+    try:
+        relative_generation = int(relative_text)
+    except ValueError:
+        return dataset_name
+    if relative_generation > 0:
+        return dataset_name
+
+    concrete_names = _sorted_gdg_generation_names(base, entries)
+    index = len(concrete_names) - 1 + relative_generation
+    if 0 <= index < len(concrete_names):
+        return concrete_names[index]
+    return dataset_name
+
+
+def _sorted_gdg_generation_names(base: str, entries) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            str(name)
+            for entry in entries
+            if (name := getattr(entry, "name", None)) is not None and str(name).startswith(f"{base}.")
+        )
+    )
 
 
 def _unsupported_vbs_dataset_error(dataset_name: str, entries) -> ZOAUUnsupportedDatasetError:
