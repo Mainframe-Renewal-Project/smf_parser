@@ -49,9 +49,6 @@ class HeaderCatalog:
     def for_record_type(self, record_type: int) -> tuple[HeaderDefinition, ...]:
         return tuple(header for header in self.headers if record_type in header.record_types)
 
-    def structs(self) -> tuple[str, ...]:
-        return ()
-
 
 def default_include_dir() -> Path:
     """Return the default z/OS C header include directory."""
