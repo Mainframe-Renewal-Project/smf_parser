@@ -100,6 +100,18 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.subsystem_id_text, "SMF")
         self.assertEqual(header.header_length, 24)
 
+    def test_parse_standard_header_decodes_packed_time(self) -> None:
+        from smf_parser import reader
+
+        record = bytearray(standard_record(30, subtype=5))
+        record[6:10] = b"\x01\x26\x21\x9f"
+
+        with patch.object(reader, "_native", None):
+            header = parse_header(record)
+
+        self.assertEqual(header.time_hundredths, 518_190)
+        self.assertEqual(header.system_id_text, "SYS1")
+
     def test_parse_standard_header_without_subtype_flag(self) -> None:
         record = bytearray(standard_record(1, subtype=50374))
         record[4] = 0

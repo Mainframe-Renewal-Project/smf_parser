@@ -89,18 +89,18 @@ def false_type_0_candidate() -> bytes:
 
 
 def unsupported_record_with_embedded_supported_candidate() -> bytes:
-    embedded = standard_record(1, system_id="YCPU")
+    embedded = standard_record(1, system_id="SYS2")
     body = (b"x" * 16) + embedded + (b"y" * 16)
     return standard_record(240, body=body)
 
 
 def incomplete_record_with_embedded_supported_candidate() -> bytes:
-    embedded = standard_record(1, system_id="YCPU")
+    embedded = standard_record(1, system_id="SYS2")
     return struct.pack(">H", 32756) + (b"x" * 16) + embedded
 
 
 def invalid_length_with_embedded_supported_candidate() -> bytes:
-    embedded = standard_record(1, system_id="YCPU")
+    embedded = standard_record(1, system_id="SYS2")
     return struct.pack(">H", 2) + (b"x" * 16) + embedded
 
 
@@ -194,7 +194,7 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records, [])
 
     def test_system_id_filter_skips_header_shaped_payload(self) -> None:
-        false = standard_record(1, subtype=50372, system_id="YCPU", body=b"payload")
+        false = standard_record(1, subtype=50372, system_id="SYS2", body=b"payload")
         valid = standard_record(30, subtype=2, system_id="DBRA")
 
         records = list(read_dataset_records([false + valid], header_catalog=header_catalog(30), system_ids={"DBRA"}))
@@ -202,7 +202,7 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records, [])
 
     def test_skips_records_with_non_packed_decimal_smf_date(self) -> None:
-        record = standard_record(30, subtype=2, date=ebcdic("YCPU"))
+        record = standard_record(30, subtype=2, date=ebcdic("BAD "))
 
         records = list(read_dataset_records([record], header_catalog=header_catalog(30)))
 
@@ -398,7 +398,7 @@ class DatasetReaderTests(unittest.TestCase):
                 generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
             )
         )
-        implausible_record = standard_record(2, system_id="DBRA", date=ebcdic("YCPU"), body=b"implausible")
+        implausible_record = standard_record(2, system_id="DBRA", date=ebcdic("BAD "), body=b"implausible")
         supported_record = standard_record(30, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(

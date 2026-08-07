@@ -134,6 +134,22 @@ def _available_ebcdic_encoding(encoding: str) -> str:
     return encoding
 
 
+def decode_smf_time_hundredths(value: bytes | bytearray | memoryview) -> int:
+    """Decode an SMF time field to hundredths of a second after midnight."""
+
+    data = bytes(value)
+    if len(data) == 4:
+        nibbles = tuple(nibble for byte in data for nibble in (byte >> 4, byte & 0x0F))
+        if nibbles[-1] in (0x0C, 0x0D, 0x0F) and all(nibble <= 9 for nibble in nibbles[:-1]):
+            hours = nibbles[0] * 10 + nibbles[1]
+            minutes = nibbles[2] * 10 + nibbles[3]
+            seconds = nibbles[4] * 10 + nibbles[5]
+            tenths = nibbles[6]
+            if hours <= 23 and minutes <= 59 and seconds <= 59:
+                return ((hours * 60 + minutes) * 60 + seconds) * 100 + tenths * 10
+    return struct.unpack(">i", data)[0]
+
+
 def parse_header(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SMFHeader:
     """Parse the standard SMF header from a record byte string."""
 
@@ -196,7 +212,7 @@ def _parse_header_python(data: bytes | bytearray | memoryview, *, offset: int = 
     segment_descriptor = struct.unpack_from(">H", view, 2)[0]
     flags = view[4]
     record_type_indicator = view[5]
-    time_hundredths = struct.unpack_from(">i", view, 6)[0]
+    time_hundredths = decode_smf_time_hundredths(view[6:10])
     date = bytes(view[10:14])
     system_id = bytes(view[14:18])
     subsystem_id: bytes | None = None

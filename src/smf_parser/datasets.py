@@ -19,6 +19,7 @@ from .reader import (
     SMFHeader,
     SMFRecord,
     decode_ebcdic,
+    decode_smf_time_hundredths,
     parse_header,
     read_records,
 )
@@ -410,7 +411,7 @@ def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | N
     if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
         return False
 
-    time_hundredths = int.from_bytes(data[6:10], "big", signed=True)
+    time_hundredths = decode_smf_time_hundredths(data[6:10])
     if not 0 <= time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
         return False
     if not _is_plausible_smf_date(data[10:14]):

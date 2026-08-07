@@ -26,6 +26,47 @@ static int32_t read_i32_be(const unsigned char *data) {
     return (int32_t)value;
 }
 
+static int decode_packed_time_hundredths(const unsigned char *data, int32_t *time_hundredths) {
+    unsigned char nibbles[8];
+    int index;
+    int hours;
+    int minutes;
+    int seconds;
+    int tenths;
+
+    for (index = 0; index < 4; index++) {
+        nibbles[index * 2] = (unsigned char)(data[index] >> 4);
+        nibbles[index * 2 + 1] = (unsigned char)(data[index] & 0x0F);
+    }
+    if (nibbles[7] != 0x0C && nibbles[7] != 0x0D && nibbles[7] != 0x0F) {
+        return 0;
+    }
+    for (index = 0; index < 7; index++) {
+        if (nibbles[index] > 9) {
+            return 0;
+        }
+    }
+
+    hours = nibbles[0] * 10 + nibbles[1];
+    minutes = nibbles[2] * 10 + nibbles[3];
+    seconds = nibbles[4] * 10 + nibbles[5];
+    tenths = nibbles[6];
+    if (hours > 23 || minutes > 59 || seconds > 59) {
+        return 0;
+    }
+
+    *time_hundredths = (int32_t)((((hours * 60) + minutes) * 60 + seconds) * 100 + tenths * 10);
+    return 1;
+}
+
+static int32_t decode_smf_time_hundredths(const unsigned char *data) {
+    int32_t time_hundredths;
+    if (decode_packed_time_hundredths(data, &time_hundredths)) {
+        return time_hundredths;
+    }
+    return read_i32_be(data);
+}
+
 static PyObject *none_or_long(int present, long value) {
     if (!present) {
         Py_RETURN_NONE;
@@ -93,7 +134,7 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
     segment_descriptor = read_u16_be(data + 2);
     flags = data[4];
     record_type_indicator = data[5];
-    time_hundredths = read_i32_be(data + 6);
+    time_hundredths = decode_smf_time_hundredths(data + 6);
 
     if (length >= STANDARD_HEADER_LENGTH && view.len >= STANDARD_HEADER_LENGTH) {
         has_subsystem = 1;

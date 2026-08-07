@@ -69,6 +69,9 @@ def _include_dirs() -> tuple[Path, ...]:
     ibm_include_dir = Path(configured_ibm_include) if configured_ibm_include else include_dir.parent / "IBM"
     if ibm_include_dir != include_dir:
         include_dirs.append(ibm_include_dir)
+    include_root = include_dir.parent
+    if include_root not in include_dirs:
+        include_dirs.append(include_root)
     return tuple(include_dirs)
 
 

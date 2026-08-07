@@ -56,6 +56,7 @@ HEADER_TARGETS = (
     {"name": "ihahr098.h", "record_types": (98,), "generic": False},
     {"name": "hwismf6a.h", "record_types": (106,), "generic": False},
     {"name": "hisysmfr.h", "record_types": (113,), "generic": False},
+    {"name": "ezasmf.h", "record_types": (119,), "generic": False},
     {"name": "iosds124.h", "record_types": (124,), "generic": False},
     {"name": "gtzzsmf1.h", "record_types": (125,), "generic": False},
     {"name": "iazs1153.h", "record_types": (1153,), "generic": False},
