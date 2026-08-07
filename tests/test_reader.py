@@ -4,6 +4,7 @@ import struct
 import unittest
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from smf_parser import (
@@ -101,6 +102,36 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.record_type, 1)
         self.assertIsNone(header.subtype)
         self.assertFalse(header.has_subtype)
+
+    def test_parse_header_uses_native_parser_when_available(self) -> None:
+        from smf_parser import reader
+
+        native = SimpleNamespace(
+            parse_header=lambda data: (
+                len(data),
+                len(data),
+                0,
+                0x40,
+                30,
+                12_345,
+                b"\x00\x20\x23\x1f",
+                ebcdic("SYS1"),
+                ebcdic("SMF "),
+                5,
+                24,
+                None,
+                None,
+                None,
+                None,
+            )
+        )
+
+        with patch.object(reader, "_native", native):
+            header = parse_header(standard_record(30, subtype=5))
+
+        self.assertEqual(header.record_type, 30)
+        self.assertEqual(header.subtype, 5)
+        self.assertEqual(header.system_id_text, "SYS1")
 
     def test_parse_extended_v2_header(self) -> None:
         record = extended_v2_record(1154, subtype=128, body=b"payload")

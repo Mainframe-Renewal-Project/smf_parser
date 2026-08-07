@@ -14,6 +14,11 @@ from typing import BinaryIO, Literal
 from .errors import HeaderCatalogError, SMFParseError, TruncatedSMFRecord
 from .headers import HeaderCatalog, HeaderDefinition
 
+try:
+    from . import _native
+except ImportError:
+    _native = None
+
 RecordFormat = Literal["auto", "smf", "rdw"]
 
 _MIN_RECORD_LENGTH = 18
@@ -120,6 +125,42 @@ def decode_ebcdic(value: bytes, *, encoding: str = "cp037") -> str:
 
 def parse_header(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SMFHeader:
     """Parse the standard SMF header from a record byte string."""
+
+    if _native is not None:
+        return _parse_header_native(data, offset=offset)
+
+    return _parse_header_python(data, offset=offset)
+
+
+def _parse_header_native(data: bytes | bytearray | memoryview, *, offset: int) -> SMFHeader:
+    try:
+        fields = _native.parse_header(data)
+    except EOFError as error:
+        raise TruncatedSMFRecord(str(error), offset=offset) from error
+    except ValueError as error:
+        raise SMFParseError(str(error), offset=offset) from error
+
+    return SMFHeader(
+        length=fields[0],
+        raw_length=fields[1],
+        segment_descriptor=fields[2],
+        flags=fields[3],
+        record_type_indicator=fields[4],
+        time_hundredths=fields[5],
+        date=fields[6],
+        system_id=fields[7],
+        subsystem_id=fields[8],
+        subtype=fields[9],
+        header_length=fields[10],
+        extended_header_length=fields[11],
+        extended_version=fields[12],
+        extended_flags=fields[13],
+        extended_record_type=fields[14],
+    )
+
+
+def _parse_header_python(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SMFHeader:
+    """Source-tree fallback for environments where the native extension is not built."""
 
     view = memoryview(data)
     if len(view) < _MIN_RECORD_LENGTH:

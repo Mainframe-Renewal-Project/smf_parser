@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from setuptools import setup
+from setuptools import Extension, setup
 from setuptools._distutils.ccompiler import CompileError, new_compiler
 from setuptools._distutils.sysconfig import customize_compiler
 from setuptools.command.build_py import build_py as build_py_base
@@ -99,4 +99,14 @@ def _header_targets() -> tuple[dict[str, Any], ...]:
     return tuple(module.HEADER_TARGETS)
 
 
-setup(cmdclass={"build_py": build_py})
+def _native_extension() -> Extension:
+    include_dir = _include_dir()
+    return Extension(
+        "smf_parser._native",
+        sources=[str(ROOT / "src" / "smf_parser" / "_native.c")],
+        include_dirs=[str(include_dir)],
+        extra_compile_args=list(HEADER_COMPILE_FLAGS),
+    )
+
+
+setup(cmdclass={"build_py": build_py}, ext_modules=[_native_extension()])
