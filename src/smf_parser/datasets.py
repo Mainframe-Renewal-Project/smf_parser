@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Iterator
 from importlib import import_module
-from typing import Literal
 
 from .errors import HeaderCatalogError, SMFParseError, ZOAUMissingError
 from .headers import HeaderCatalog
@@ -17,7 +16,7 @@ from .reader import (
     read_records,
 )
 
-DatasetRecordFormat = Literal["auto", "smf", "rdw"]
+DatasetRecordFormat = RecordFormat
 _MIN_SMF_RECORD_LENGTH = 18
 _MAX_SMF_RECORD_LENGTH = 32756
 _MAX_SMF_TIME_HUNDREDTHS = 24 * 60 * 60 * 100
@@ -118,7 +117,7 @@ def _detect_dataset_record_format(data: bytes) -> RecordFormat:
 def _read_smf_dataset_records(
     records: Iterable[bytes],
     *,
-    record_format: Literal["auto", "smf"],
+    record_format: DatasetRecordFormat,
     skip_short_records: bool,
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
