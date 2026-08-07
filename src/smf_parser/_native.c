@@ -155,15 +155,15 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
 static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwargs) {
 #ifdef __MVS__
     static char *keywords[] = {"dataset_name", "records", "offset", "tail", NULL};
+    static const char *open_modes[] = {"rb,type=record", "r,type=record", NULL};
     const char *dataset_name;
     int records = 0;
     int offset = 0;
     int tail = 0;
     char dataset_path[512];
     unsigned char buffer[VBS_MAX_LOGICAL_RECORD_LENGTH];
-    FILE *file;
-    PyObject *result;
-    int skipped = 0;
+    int mode_index;
+    int last_open_errno = 0;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|iip", keywords, &dataset_name, &records, &offset, &tail)) {
         return NULL;
@@ -183,66 +183,84 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
         return NULL;
     }
 
-    file = fopen(dataset_path, "rb,type=record");
-    if (file == NULL) {
-        return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
-    }
+    for (mode_index = 0; open_modes[mode_index] != NULL; mode_index++) {
+        FILE *file = fopen(dataset_path, open_modes[mode_index]);
+        PyObject *result;
+        int skipped = 0;
 
-    result = PyList_New(0);
-    if (result == NULL) {
-        fclose(file);
-        return NULL;
-    }
-
-    for (;;) {
-        size_t bytes_read = fread(buffer, 1, sizeof(buffer), file);
-        PyObject *record;
-
-        if (bytes_read == 0) {
-            if (feof(file)) {
-                break;
-            }
-            Py_DECREF(result);
-            fclose(file);
-            return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
-        }
-
-        if (skipped < offset) {
-            skipped += 1;
+        if (file == NULL) {
+            last_open_errno = errno;
             continue;
         }
 
-        record = PyBytes_FromStringAndSize((const char *)buffer, (Py_ssize_t)bytes_read);
-        if (record == NULL) {
-            Py_DECREF(result);
+        result = PyList_New(0);
+        if (result == NULL) {
             fclose(file);
             return NULL;
         }
-        if (PyList_Append(result, record) < 0) {
-            Py_DECREF(record);
-            Py_DECREF(result);
-            fclose(file);
-            return NULL;
-        }
-        Py_DECREF(record);
 
-        if (!tail && records > 0 && PyList_GET_SIZE(result) >= records) {
-            break;
+        for (;;) {
+            size_t bytes_read = fread(buffer, 1, sizeof(buffer), file);
+            PyObject *record;
+
+            if (bytes_read == 0) {
+                if (feof(file)) {
+                    break;
+                }
+                Py_DECREF(result);
+                fclose(file);
+                return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
+            }
+
+            if (skipped < offset) {
+                skipped += 1;
+                continue;
+            }
+
+            record = PyBytes_FromStringAndSize((const char *)buffer, (Py_ssize_t)bytes_read);
+            if (record == NULL) {
+                Py_DECREF(result);
+                fclose(file);
+                return NULL;
+            }
+            if (PyList_Append(result, record) < 0) {
+                Py_DECREF(record);
+                Py_DECREF(result);
+                fclose(file);
+                return NULL;
+            }
+            Py_DECREF(record);
+
+            if (!tail && records > 0 && PyList_GET_SIZE(result) >= records) {
+                break;
+            }
         }
+
+        if (fclose(file) != 0) {
+            Py_DECREF(result);
+            return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
+        }
+
+        if (PyList_GET_SIZE(result) == 0 && open_modes[mode_index + 1] != NULL) {
+            Py_DECREF(result);
+            continue;
+        }
+
+        if (tail && records > 0 && PyList_GET_SIZE(result) > records) {
+            Py_ssize_t length = PyList_GET_SIZE(result);
+            PyObject *tail_records = PyList_GetSlice(result, length - records, length);
+            Py_DECREF(result);
+            return tail_records;
+        }
+        return result;
     }
 
-    if (fclose(file) != 0) {
-        Py_DECREF(result);
+    if (last_open_errno != 0) {
+        errno = last_open_errno;
         return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
     }
 
-    if (tail && records > 0 && PyList_GET_SIZE(result) > records) {
-        Py_ssize_t length = PyList_GET_SIZE(result);
-        PyObject *tail_records = PyList_GetSlice(result, length - records, length);
-        Py_DECREF(result);
-        return tail_records;
-    }
-    return result;
+    return PyList_New(0);
 #else
     PyErr_SetString(PyExc_NotImplementedError, "VBS dataset reading is only available in native z/OS builds");
     return NULL;
