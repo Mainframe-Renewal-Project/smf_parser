@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools >= 80.9.0", "setuptools-scm >= 9.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smf_parser"
+requires-python = ">= 3.13"
+readme = "README.md"
+license = "Apache-2.0"
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/Mainframe-Renewal-Project/smf_parser"
+Issues = "https://github.com/Mainframe-Renewal-Project/smf_parser/issues"
+
+# This is required for dynamic versioning to work
+[tool.setuptools_scm]
