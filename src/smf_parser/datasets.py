@@ -211,6 +211,7 @@ def _read_native_vbs_smf_records(
         header_catalog=_require_header_catalog(header_catalog),
         system_ids=system_ids,
         split_on_record_start=False,
+        skip_invalid_records=True,
         trusted_record_boundaries=True,
     )
 
@@ -273,11 +274,13 @@ def _read_smf_dataset_records(
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
     split_on_record_start: bool = True,
+    skip_invalid_records: bool | None = None,
     trusted_record_boundaries: bool = False,
 ) -> Iterator[SMFRecord]:
     logical_offset = 0
     buffer = bytearray()
     buffer_offset = 0
+    skip_invalid = skip_short_records if skip_invalid_records is None else skip_invalid_records
 
     for data in records:
         if skip_short_records and not buffer and len(data) < _MIN_SMF_RECORD_LENGTH:
@@ -301,14 +304,14 @@ def _read_smf_dataset_records(
         yield from _drain_smf_buffer(
             buffer,
             buffer_offset=buffer_offset,
-            skip_invalid_records=skip_short_records,
+            skip_invalid_records=skip_invalid,
             header_catalog=header_catalog,
             system_ids=system_ids,
             trusted_record_boundaries=trusted_record_boundaries,
         )
         logical_offset += len(data)
 
-    if buffer and not skip_short_records:
+    if buffer and not skip_short_records and not skip_invalid:
         parse_header(bytes(buffer), offset=buffer_offset)
 
 
