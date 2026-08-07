@@ -202,8 +202,8 @@ def _drain_smf_buffer(
                 if not header_definitions:
                     raise HeaderCatalogError(f"no z/OS C header definition found for SMF record type {header.record_type}")
                 parse_header(data, offset=header_offset)
-            del buffer[0]
-            consumed += 1
+            del buffer[:record_length]
+            consumed += record_length
             continue
         yield SMFRecord(
             data=data,

@@ -153,7 +153,8 @@ def parse_header(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SM
 
     if length >= _STANDARD_HEADER_LENGTH and len(view) >= _STANDARD_HEADER_LENGTH:
         subsystem_id = bytes(view[18:22])
-        subtype = struct.unpack_from(">H", view, 22)[0]
+        if flags & _SUBTYPE_VALID_FLAG:
+            subtype = struct.unpack_from(">H", view, 22)[0]
         header_length = _STANDARD_HEADER_LENGTH
 
     extended_header_length: int | None = None

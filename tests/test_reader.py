@@ -92,6 +92,16 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.subsystem_id_text, "SMF")
         self.assertEqual(header.header_length, 24)
 
+    def test_parse_standard_header_without_subtype_flag(self) -> None:
+        record = bytearray(standard_record(1, subtype=50374))
+        record[4] = 0
+
+        header = parse_header(record)
+
+        self.assertEqual(header.record_type, 1)
+        self.assertIsNone(header.subtype)
+        self.assertFalse(header.has_subtype)
+
     def test_parse_extended_v2_header(self) -> None:
         record = extended_v2_record(1154, subtype=128, body=b"payload")
 

@@ -73,6 +73,12 @@ def false_type_0_candidate() -> bytes:
     return header + (b"\0" * (length - len(header)))
 
 
+def unsupported_record_with_embedded_supported_candidate() -> bytes:
+    embedded = standard_record(1, system_id="YCPU")
+    body = (b"x" * 16) + embedded + (b"y" * 16)
+    return standard_record(240, body=body)
+
+
 def header_catalog(*record_types: int) -> HeaderCatalog:
     include_dir = Path("/compiled/zos")
     return HeaderCatalog(
@@ -130,6 +136,16 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
         self.assertEqual(records[0].offset, len(false_type_0_candidate()))
+
+    def test_skips_payload_candidates_inside_unsupported_records(self) -> None:
+        false = unsupported_record_with_embedded_supported_candidate()
+        valid = standard_record(30, subtype=2)
+
+        records = list(read_dataset_records([false + valid], header_catalog=header_catalog(1, 30)))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].offset, len(false))
 
     def test_system_id_filter_skips_header_shaped_payload(self) -> None:
         false = standard_record(1, subtype=50372, system_id="YCPU", body=b"payload")
