@@ -419,6 +419,48 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual(parsed, [])
 
+    def test_read_dataset_accepts_date_first_native_vbs_header(self) -> None:
+        fake_datasets = SimpleNamespace(
+            list_datasets=lambda pattern: [],
+            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+        )
+        fake_gdgs = SimpleNamespace(
+            GenerationDataGroupView=lambda base: SimpleNamespace(
+                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+            )
+        )
+        record = struct.pack(
+            ">HHBB4s4s4sH",
+            20,
+            0x0054,
+            0x40,
+            102,
+            b"\x01\x26\x21\x9f",
+            ebcdic("SYS1"),
+            ebcdic("SMF "),
+            7,
+        )
+
+        fake_native = SimpleNamespace(
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record],
+        )
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "zoautil_py.gdgs":
+                return fake_gdgs
+            if name == "smf_parser._native":
+                return fake_native
+            raise ImportError(name)
+
+        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
+            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(102)))
+
+        self.assertEqual([record.record_type for record in parsed], [102])
+        self.assertEqual(parsed[0].header.date, b"\x01\x26\x21\x9f")
+        self.assertEqual(parsed[0].header.system_id_text, "SYS1")
+
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
             patch("smf_parser.datasets.import_module", side_effect=ImportError("no zoau")),

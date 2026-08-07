@@ -20,6 +20,7 @@ from .reader import (
     SMFRecord,
     decode_ebcdic,
     decode_smf_time_hundredths,
+    is_packed_smf_date,
     parse_header,
     read_records,
 )
@@ -411,16 +412,21 @@ def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | N
     if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
         return False
 
-    time_hundredths = decode_smf_time_hundredths(data[6:10])
+    date_first_header = not is_packed_smf_date(data[10:14]) and is_packed_smf_date(data[6:10])
+    time_hundredths = 0 if date_first_header else decode_smf_time_hundredths(data[6:10])
     if not 0 <= time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
         return False
-    if not _is_plausible_smf_date(data[10:14]):
+    date = data[6:10] if date_first_header else data[10:14]
+    system_id = data[10:14] if date_first_header else data[14:18]
+    subsystem_id = data[14:18] if date_first_header else data[18:22]
+    if not _is_plausible_smf_date(date):
         return False
-    if not _is_plausible_identifier(data[14:18], allow_blank=False):
+    if not _is_plausible_identifier(system_id, allow_blank=False):
         return False
-    if system_ids is not None and decode_ebcdic(data[14:18]) not in system_ids:
+    if system_ids is not None and decode_ebcdic(system_id) not in system_ids:
         return False
-    return len(data) < 24 or _is_plausible_identifier(data[18:22], allow_blank=True)
+    minimum_subsystem_length = 18 if date_first_header else 22
+    return len(data) < minimum_subsystem_length or _is_plausible_identifier(subsystem_id, allow_blank=True)
 
 def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatalog:
     catalog = HeaderCatalog.discover() if header_catalog is None else header_catalog

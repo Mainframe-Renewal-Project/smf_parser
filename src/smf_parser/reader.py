@@ -7,16 +7,17 @@ from codecs import lookup
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from importlib import import_module
 from io import BytesIO
 from os import PathLike
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 from .errors import HeaderCatalogError, SMFParseError, TruncatedSMFRecord
 from .headers import HeaderCatalog, HeaderDefinition
 
 try:
-    from . import _native
+    _native: Any | None = import_module("smf_parser._native")
 except ImportError:
     _native = None
 
@@ -25,6 +26,7 @@ RecordFormat = Literal["auto", "smf", "rdw"]
 _MIN_RECORD_LENGTH = 18
 _MAX_RECORD_LENGTH = 32756
 _STANDARD_HEADER_LENGTH = 24
+_DATE_FIRST_HEADER_LENGTH = 20
 _EXTENDED_RECORD_INDICATOR = 126
 _SUBTYPE_VALID_FLAG = 0x40
 _EXTENDED_HEADER_FLAG = 0x20
@@ -150,18 +152,32 @@ def decode_smf_time_hundredths(value: bytes | bytearray | memoryview) -> int:
     return struct.unpack(">i", data)[0]
 
 
+def is_packed_smf_date(value: bytes | bytearray | memoryview) -> bool:
+    """Return whether bytes look like an SMF packed date, 0cyydddF."""
+
+    data = bytes(value)
+    if len(data) != 4:
+        return False
+    nibbles = tuple(nibble for byte in data for nibble in (byte >> 4, byte & 0x0F))
+    if nibbles[-1] != 0x0F or any(nibble > 9 for nibble in nibbles[:-1]):
+        return False
+    day_of_year = nibbles[4] * 100 + nibbles[5] * 10 + nibbles[6]
+    return 1 <= day_of_year <= 366
+
+
 def parse_header(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SMFHeader:
     """Parse the standard SMF header from a record byte string."""
 
-    if _native is not None:
-        return _parse_header_native(data, offset=offset)
+    native = _native
+    if native is not None:
+        return _parse_header_native(native, data, offset=offset)
 
     return _parse_header_python(data, offset=offset)
 
 
-def _parse_header_native(data: bytes | bytearray | memoryview, *, offset: int) -> SMFHeader:
+def _parse_header_native(native: Any, data: bytes | bytearray | memoryview, *, offset: int) -> SMFHeader:
     try:
-        fields = _native.parse_header(data)
+        fields = native.parse_header(data)
     except EOFError as error:
         raise TruncatedSMFRecord(str(error), offset=offset) from error
     except ValueError as error:
@@ -212,14 +228,25 @@ def _parse_header_python(data: bytes | bytearray | memoryview, *, offset: int = 
     segment_descriptor = struct.unpack_from(">H", view, 2)[0]
     flags = view[4]
     record_type_indicator = view[5]
-    time_hundredths = decode_smf_time_hundredths(view[6:10])
-    date = bytes(view[10:14])
-    system_id = bytes(view[14:18])
+    date_first_header = not is_packed_smf_date(view[10:14]) and is_packed_smf_date(view[6:10])
+    if date_first_header:
+        time_hundredths = 0
+        date = bytes(view[6:10])
+        system_id = bytes(view[10:14])
+    else:
+        time_hundredths = decode_smf_time_hundredths(view[6:10])
+        date = bytes(view[10:14])
+        system_id = bytes(view[14:18])
     subsystem_id: bytes | None = None
     subtype: int | None = None
     header_length = _MIN_RECORD_LENGTH
 
-    if length >= _STANDARD_HEADER_LENGTH and len(view) >= _STANDARD_HEADER_LENGTH:
+    if date_first_header and length >= _DATE_FIRST_HEADER_LENGTH and len(view) >= _DATE_FIRST_HEADER_LENGTH:
+        subsystem_id = bytes(view[14:18])
+        if flags & _SUBTYPE_VALID_FLAG:
+            subtype = struct.unpack_from(">H", view, 18)[0]
+        header_length = _DATE_FIRST_HEADER_LENGTH
+    elif length >= _STANDARD_HEADER_LENGTH and len(view) >= _STANDARD_HEADER_LENGTH:
         subsystem_id = bytes(view[18:22])
         if flags & _SUBTYPE_VALID_FLAG:
             subtype = struct.unpack_from(">H", view, 22)[0]

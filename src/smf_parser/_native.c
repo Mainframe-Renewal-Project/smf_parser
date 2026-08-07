@@ -12,6 +12,7 @@
 #define MIN_RECORD_LENGTH 18
 #define MAX_RECORD_LENGTH 32756
 #define STANDARD_HEADER_LENGTH 24
+#define DATE_FIRST_HEADER_LENGTH 20
 #define EXTENDED_RECORD_INDICATOR 126
 #define SUBTYPE_VALID_FLAG 0x40
 #define EXTENDED_HEADER_FLAG 0x20
@@ -67,6 +68,27 @@ static int32_t decode_smf_time_hundredths(const unsigned char *data) {
     return read_i32_be(data);
 }
 
+static int is_packed_smf_date(const unsigned char *data) {
+    unsigned char nibbles[8];
+    int index;
+    int day_of_year;
+
+    for (index = 0; index < 4; index++) {
+        nibbles[index * 2] = (unsigned char)(data[index] >> 4);
+        nibbles[index * 2 + 1] = (unsigned char)(data[index] & 0x0F);
+    }
+    if (nibbles[7] != 0x0F) {
+        return 0;
+    }
+    for (index = 0; index < 7; index++) {
+        if (nibbles[index] > 9) {
+            return 0;
+        }
+    }
+    day_of_year = nibbles[4] * 100 + nibbles[5] * 10 + nibbles[6];
+    return day_of_year >= 1 && day_of_year <= 366;
+}
+
 static PyObject *none_or_long(int present, long value) {
     if (!present) {
         Py_RETURN_NONE;
@@ -99,6 +121,7 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
     unsigned char extended_flags = 0;
     uint16_t extended_record_type = 0;
     uint16_t header_length = MIN_RECORD_LENGTH;
+    int date_first_header = 0;
     const unsigned char *data;
     PyObject *result;
 
@@ -134,9 +157,17 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
     segment_descriptor = read_u16_be(data + 2);
     flags = data[4];
     record_type_indicator = data[5];
-    time_hundredths = decode_smf_time_hundredths(data + 6);
+    date_first_header = !is_packed_smf_date(data + 10) && is_packed_smf_date(data + 6);
+    time_hundredths = date_first_header ? 0 : decode_smf_time_hundredths(data + 6);
 
-    if (length >= STANDARD_HEADER_LENGTH && view.len >= STANDARD_HEADER_LENGTH) {
+    if (date_first_header && length >= DATE_FIRST_HEADER_LENGTH && view.len >= DATE_FIRST_HEADER_LENGTH) {
+        has_subsystem = 1;
+        if (flags & SUBTYPE_VALID_FLAG) {
+            has_subtype = 1;
+            subtype = read_u16_be(data + 18);
+        }
+        header_length = DATE_FIRST_HEADER_LENGTH;
+    } else if (length >= STANDARD_HEADER_LENGTH && view.len >= STANDARD_HEADER_LENGTH) {
         has_subsystem = 1;
         if (flags & SUBTYPE_VALID_FLAG) {
             has_subtype = 1;
@@ -179,9 +210,9 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
     PyTuple_SET_ITEM(result, 3, PyLong_FromUnsignedLong(flags));
     PyTuple_SET_ITEM(result, 4, PyLong_FromUnsignedLong(record_type_indicator));
     PyTuple_SET_ITEM(result, 5, PyLong_FromLong(time_hundredths));
-    PyTuple_SET_ITEM(result, 6, PyBytes_FromStringAndSize((const char *)(data + 10), 4));
-    PyTuple_SET_ITEM(result, 7, PyBytes_FromStringAndSize((const char *)(data + 14), 4));
-    PyTuple_SET_ITEM(result, 8, none_or_bytes(has_subsystem, data + 18, 4));
+    PyTuple_SET_ITEM(result, 6, PyBytes_FromStringAndSize((const char *)(data + (date_first_header ? 6 : 10)), 4));
+    PyTuple_SET_ITEM(result, 7, PyBytes_FromStringAndSize((const char *)(data + (date_first_header ? 10 : 14)), 4));
+    PyTuple_SET_ITEM(result, 8, none_or_bytes(has_subsystem, data + (date_first_header ? 14 : 18), 4));
     PyTuple_SET_ITEM(result, 9, none_or_long(has_subtype, subtype));
     PyTuple_SET_ITEM(result, 10, PyLong_FromUnsignedLong(header_length));
     PyTuple_SET_ITEM(result, 11, none_or_long(has_extended_header, extended_header_length));

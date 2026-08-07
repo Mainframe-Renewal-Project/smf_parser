@@ -112,6 +112,32 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.time_hundredths, 518_190)
         self.assertEqual(header.system_id_text, "SYS1")
 
+    def test_parse_date_first_header(self) -> None:
+        from smf_parser import reader
+
+        length = 20
+        record = struct.pack(
+            ">HHBB4s4s4sH",
+            length,
+            0x0054,
+            0x40,
+            102,
+            b"\x01\x26\x21\x9f",
+            ebcdic("SYS1"),
+            ebcdic("SMF "),
+            7,
+        )
+
+        with patch.object(reader, "_native", None):
+            header = parse_header(record)
+
+        self.assertEqual(header.record_type, 102)
+        self.assertEqual(header.date, b"\x01\x26\x21\x9f")
+        self.assertEqual(header.system_id_text, "SYS1")
+        self.assertEqual(header.subsystem_id_text, "SMF")
+        self.assertEqual(header.subtype, 7)
+        self.assertEqual(header.header_length, 20)
+
     def test_parse_standard_header_without_subtype_flag(self) -> None:
         record = bytearray(standard_record(1, subtype=50374))
         record[4] = 0
