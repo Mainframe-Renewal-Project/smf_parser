@@ -1,0 +1,1 @@
+include src/smf_parser/_native.c

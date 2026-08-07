@@ -10,7 +10,9 @@ from typing import Any
 from setuptools import Extension, setup
 from setuptools._distutils.ccompiler import CompileError, new_compiler
 from setuptools._distutils.sysconfig import customize_compiler
+from setuptools._distutils.util import get_platform
 from setuptools.command.build_py import build_py as build_py_base
+from wheel.bdist_wheel import bdist_wheel as bdist_wheel_base
 
 DEFAULT_INCLUDE_DIR = Path("/usr/include/zos")
 ROOT = Path(__file__).parent
@@ -34,6 +36,18 @@ class build_py(build_py_base):
             f"HEADERS = {compiled_headers!r}\n",
             encoding="utf-8",
         )
+
+
+class bdist_wheel(bdist_wheel_base):
+    def finalize_options(self) -> None:
+        super().finalize_options()
+        self.root_is_pure = False
+
+    def get_tag(self) -> tuple[str, str, str]:
+        python_tag, abi_tag, platform_tag = super().get_tag()
+        if platform_tag == "any":
+            platform_tag = get_platform().replace("-", "_").replace(".", "_")
+        return python_tag, abi_tag, platform_tag
 
 
 def _include_dir() -> Path:
@@ -103,10 +117,10 @@ def _native_extension() -> Extension:
     include_dir = _include_dir()
     return Extension(
         "smf_parser._native",
-        sources=[str(ROOT / "src" / "smf_parser" / "_native.c")],
+        sources=["src/smf_parser/_native.c"],
         include_dirs=[str(include_dir)],
         extra_compile_args=list(HEADER_COMPILE_FLAGS),
     )
 
 
-setup(cmdclass={"build_py": build_py}, ext_modules=[_native_extension()])
+setup(cmdclass={"build_py": build_py, "bdist_wheel": bdist_wheel}, ext_modules=[_native_extension()])
