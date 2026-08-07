@@ -40,6 +40,16 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].subtype, 2)
         self.assertIsNone(records[0].rdw)
 
+    def test_reassembles_smf_records_split_across_dataset_records(self) -> None:
+        smf_record = standard_record(30, subtype=2, body=b"a" * 2000)
+
+        records = list(read_dataset_records([smf_record[:1408], smf_record[1408:]]))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].subtype, 2)
+        self.assertEqual(records[0].data, smf_record)
+
     def test_reads_dataset_records_that_include_external_rdw(self) -> None:
         smf_record = standard_record(14, body=b"payload")
         dataset_record = struct.pack(">HH", len(smf_record) + 4, 0) + smf_record

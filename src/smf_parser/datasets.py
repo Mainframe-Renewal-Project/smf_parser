@@ -10,6 +10,7 @@ from .errors import ZOAUMissingError
 from .reader import ExternalRDW, RecordFormat, SMFRecord, parse_header, read_records
 
 DatasetRecordFormat = Literal["auto", "smf", "rdw"]
+_MIN_SMF_RECORD_LENGTH = 18
 
 
 def read_dataset(
@@ -54,19 +55,23 @@ def read_dataset_records(
     fail on them instead.
     """
 
+    if record_format in ("auto", "smf"):
+        yield from _read_smf_dataset_records(
+            records,
+            record_format=record_format,
+            skip_short_records=skip_short_records,
+        )
+        return
+
+    if record_format != "rdw":
+        raise ValueError(f"unsupported dataset record format: {record_format!r}")
+
     logical_offset = 0
     for data in records:
-        if skip_short_records and len(data) < 18:
+        if skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
             logical_offset += len(data)
             continue
-        selected_format = _detect_dataset_record_format(data) if record_format == "auto" else record_format
-        if selected_format == "smf":
-            header = parse_header(data, offset=logical_offset)
-            yield SMFRecord(data=data, header=header, offset=logical_offset)
-        elif selected_format == "rdw":
-            yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset)
-        else:
-            raise ValueError(f"unsupported dataset record format: {record_format!r}")
+        yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset)
         logical_offset += len(data)
 
 
@@ -87,6 +92,56 @@ def _detect_dataset_record_format(data: bytes) -> RecordFormat:
         if external_length == len(data) and payload_length == len(data) - 4:
             return "rdw"
     return "smf"
+
+
+def _read_smf_dataset_records(
+    records: Iterable[bytes],
+    *,
+    record_format: Literal["auto", "smf"],
+    skip_short_records: bool,
+) -> Iterator[SMFRecord]:
+    buffer = bytearray()
+    buffer_offset = 0
+    logical_offset = 0
+
+    for data in records:
+        if not buffer and skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
+            logical_offset += len(data)
+            continue
+
+        selected_format = _detect_dataset_record_format(data) if record_format == "auto" and not buffer else "smf"
+        if selected_format == "rdw":
+            yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset)
+            logical_offset += len(data)
+            continue
+
+        if not buffer:
+            buffer_offset = logical_offset
+        buffer.extend(data)
+        yield from _drain_smf_buffer(buffer, buffer_offset=buffer_offset)
+        buffer_offset = logical_offset + len(data) - len(buffer)
+        logical_offset += len(data)
+
+    if not buffer:
+        return
+    if skip_short_records and len(buffer) < _MIN_SMF_RECORD_LENGTH:
+        return
+    parse_header(bytes(buffer), offset=buffer_offset)
+
+
+def _drain_smf_buffer(buffer: bytearray, *, buffer_offset: int) -> Iterator[SMFRecord]:
+    consumed = 0
+    while len(buffer) >= _MIN_SMF_RECORD_LENGTH:
+        record_length = int.from_bytes(buffer[0:2], "big")
+        if record_length & 0x8000:
+            record_length &= 0x7FFF
+        if record_length > len(buffer):
+            break
+
+        data = bytes(buffer[:record_length])
+        yield SMFRecord(data=data, header=parse_header(data, offset=buffer_offset + consumed), offset=buffer_offset + consumed)
+        del buffer[:record_length]
+        consumed += record_length
 
 
 def _read_one_rdw_dataset_record(data: bytes, *, logical_offset: int) -> Iterator[SMFRecord]:
