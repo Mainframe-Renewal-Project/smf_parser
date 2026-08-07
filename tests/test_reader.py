@@ -236,6 +236,19 @@ class HeaderCatalogTests(unittest.TestCase):
         self.assertIsNotNone(catalog.by_name("ifasmfh"))
         self.assertTrue(any(header.name == "ifasmfh.h" for header in catalog.for_record_type(92)))
 
+    def test_finds_ibm_uppercase_extensionless_headers_by_logical_name(self) -> None:
+        include_dir = Path("/usr/include/IBM")
+        catalog = HeaderCatalog(
+            include_dir=include_dir,
+            headers=(
+                HeaderDefinition(name="ifasmfr.h", path=include_dir / "IFASMFR", record_types=(), generic=True),
+            ),
+        )
+
+        self.assertIsNotNone(catalog.by_name("ifasmfr"))
+        self.assertIsNotNone(catalog.by_name("ifasmfr.h"))
+        self.assertIsNotNone(catalog.by_name("IFASMFR"))
+
     def test_generic_headers_do_not_match_every_record_type(self) -> None:
         include_dir = Path("/compiled/zos")
         catalog = HeaderCatalog(

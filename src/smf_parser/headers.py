@@ -40,9 +40,9 @@ class HeaderCatalog:
         return cls(include_dir=root, headers=definitions)
 
     def by_name(self, name: str) -> HeaderDefinition | None:
-        normalized = name if name.endswith(".h") else f"{name}.h"
+        normalized = _normalized_header_names(name)
         for header in self.headers:
-            if header.name == normalized or header.path.name == name:
+            if normalized & _normalized_header_names(header.name, header.path.name):
                 return header
         return None
 
@@ -60,6 +60,15 @@ def default_include_dir() -> Path:
     if configured:
         return Path(configured)
     return Path("/usr/include/zos")
+
+
+def _normalized_header_names(*names: str) -> frozenset[str]:
+    normalized: set[str] = set()
+    for name in names:
+        path = Path(name)
+        stem = path.stem if path.suffix else name
+        normalized.update((name, stem, stem.upper(), f"{stem}.h", f"{stem.lower()}.h"))
+    return frozenset(normalized)
 
 
 def _compiled_headers() -> tuple[Path, tuple[HeaderDefinition, ...]]:

@@ -123,13 +123,22 @@ def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
 
 
 def _resolve_header(target: dict[str, Any], include_dirs: tuple[Path, ...]) -> tuple[str, Path] | None:
-    header_names = (str(target["name"]), *(str(name) for name in target.get("alternate_names", ())))
-    for header_name in dict.fromkeys(header_names):
+    for header_name in _header_name_candidates(target):
         for include_dir in include_dirs:
             header_path = include_dir / header_name
             if header_path.is_file():
                 return header_name, header_path
     return None
+
+
+def _header_name_candidates(target: dict[str, Any]) -> tuple[str, ...]:
+    header_names = (str(target["name"]), *(str(name) for name in target.get("alternate_names", ())))
+    candidates: list[str] = []
+    for header_name in header_names:
+        path = Path(header_name)
+        stem = path.stem if path.suffix else header_name
+        candidates.extend((header_name, stem, stem.upper()))
+    return tuple(dict.fromkeys(candidates))
 
 
 def _header_targets() -> tuple[dict[str, Any], ...]:
