@@ -11,6 +11,7 @@ from .reader import ExternalRDW, RecordFormat, SMFRecord, parse_header, read_rec
 
 DatasetRecordFormat = Literal["auto", "smf", "rdw"]
 _MIN_SMF_RECORD_LENGTH = 18
+_MAX_SMF_RECORD_LENGTH = 32756
 
 
 def read_dataset(
@@ -118,7 +119,11 @@ def _read_smf_dataset_records(
         if not buffer:
             buffer_offset = logical_offset
         buffer.extend(data)
-        yield from _drain_smf_buffer(buffer, buffer_offset=buffer_offset)
+        yield from _drain_smf_buffer(
+            buffer,
+            buffer_offset=buffer_offset,
+            skip_invalid_records=skip_short_records,
+        )
         buffer_offset = logical_offset + len(data) - len(buffer)
         logical_offset += len(data)
 
@@ -129,12 +134,23 @@ def _read_smf_dataset_records(
     parse_header(bytes(buffer), offset=buffer_offset)
 
 
-def _drain_smf_buffer(buffer: bytearray, *, buffer_offset: int) -> Iterator[SMFRecord]:
+def _drain_smf_buffer(
+    buffer: bytearray,
+    *,
+    buffer_offset: int,
+    skip_invalid_records: bool,
+) -> Iterator[SMFRecord]:
     consumed = 0
     while len(buffer) >= _MIN_SMF_RECORD_LENGTH:
         record_length = int.from_bytes(buffer[0:2], "big")
         if record_length & 0x8000:
             record_length &= 0x7FFF
+        if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
+            if not skip_invalid_records:
+                parse_header(bytes(buffer), offset=buffer_offset + consumed)
+            del buffer[0]
+            consumed += 1
+            continue
         if record_length > len(buffer):
             break
 
