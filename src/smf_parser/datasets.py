@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Iterator
 from importlib import import_module
 
-from .errors import HeaderCatalogError, SMFParseError, ZOAUMissingError
+from .errors import (
+    HeaderCatalogError,
+    SMFParseError,
+    ZOAUMissingError,
+    ZOAUUnsupportedDatasetError,
+)
 from .headers import HeaderCatalog
 from .reader import (
     ExternalRDW,
@@ -41,6 +46,7 @@ def read_dataset(
     """
 
     datasets = _zoau_datasets_module()
+    _reject_unsupported_zoau_dataset_format(datasets, dataset_name)
     dataset_records = datasets.read_as_bytes(dataset_name, records=records, offset=offset, tail=tail)
     yield from read_dataset_records(
         dataset_records,
@@ -103,6 +109,35 @@ def _zoau_datasets_module():
             "ZOAU is required to read z/OS datasets. Install/configure ZOAU on z/OS "
             "and ensure zoautil_py is importable; it is not distributed on PyPI."
         ) from error
+
+
+def _reject_unsupported_zoau_dataset_format(datasets, dataset_name: str) -> None:
+    list_datasets = getattr(datasets, "list_datasets", None)
+    if list_datasets is None:
+        return
+
+    entries = _list_zoau_dataset_metadata(list_datasets, dataset_name)
+    if not entries:
+        base = dataset_name.split("(", maxsplit=1)[0]
+        entries = _list_zoau_dataset_metadata(list_datasets, f"{base}.*")
+    if not entries:
+        return
+
+    record_formats = {
+        str(record_format).upper()
+        for entry in entries
+        if (record_format := getattr(entry, "record_format", None)) is not None
+    }
+    if record_formats == {"VBS"}:
+        names = ", ".join(str(getattr(entry, "name", "<unknown>")) for entry in entries[-3:])
+        raise ZOAUUnsupportedDatasetError(
+            f"ZOAU reports {dataset_name} as RECFM=VBS ({names}); read_as_bytes() exposes spanned segments, "
+            "not complete SMF logical records. A z/OS VBS record reconstruction path is required before parsing."
+        )
+
+
+def _list_zoau_dataset_metadata(list_datasets, pattern: str):
+    return tuple(list_datasets(pattern))
 
 
 def _detect_dataset_record_format(data: bytes) -> RecordFormat:

@@ -27,3 +27,7 @@ class HeaderCatalogError(SMFError):
 
 class ZOAUMissingError(SMFError):
     """Raised when a ZOAU-only API is used without ZOAU installed."""
+
+
+class ZOAUUnsupportedDatasetError(SMFError):
+    """Raised when ZOAU exposes dataset bytes in an unsupported record format."""

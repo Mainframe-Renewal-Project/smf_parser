@@ -9,6 +9,7 @@ from .errors import (
     SMFParseError,
     TruncatedSMFRecord,
     ZOAUMissingError,
+    ZOAUUnsupportedDatasetError,
 )
 from .headers import HeaderCatalog, HeaderDefinition, default_include_dir
 from .reader import (
@@ -32,6 +33,7 @@ __all__ = [
     "SMFRecord",
     "TruncatedSMFRecord",
     "ZOAUMissingError",
+    "ZOAUUnsupportedDatasetError",
     "decode_ebcdic",
     "default_include_dir",
     "parse_header",

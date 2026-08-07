@@ -11,6 +11,7 @@ from smf_parser import (
     HeaderDefinition,
     TruncatedSMFRecord,
     ZOAUMissingError,
+    ZOAUUnsupportedDatasetError,
     read_dataset,
     read_dataset_records,
 )
@@ -253,6 +254,22 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual([record.record_type for record in parsed], [2])
         self.assertEqual(calls, [("USER.SMF.UNLOAD", 10, 3, True)])
+
+    def test_read_dataset_rejects_zoau_vbs_datasets(self) -> None:
+        fake_datasets = SimpleNamespace(
+            list_datasets=lambda pattern: [
+                SimpleNamespace(name="USER.SMF.UNLOAD.G0001V00", record_format="VBS"),
+            ]
+            if pattern == "USER.SMF.UNLOAD.*"
+            else [],
+            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+        )
+
+        with (
+            patch("smf_parser.datasets.import_module", return_value=fake_datasets),
+            self.assertRaises(ZOAUUnsupportedDatasetError),
+        ):
+            list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
 
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
