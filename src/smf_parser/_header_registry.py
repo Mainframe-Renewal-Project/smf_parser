@@ -14,7 +14,7 @@ HEADER_TARGETS = (
     {"name": "ifasmfr4.h", "record_types": (4,), "generic": False},
     {"name": "ifasmfr5.h", "record_types": (5,), "generic": False},
     {"name": "ifasmfr9.h", "record_types": (9,), "generic": False},
-    {"name": "ifasmfra.h", "record_types": (10,), "generic": False},
+    {"name": "ifasmfra.h", "record_types": tuple(range(85, 104)), "generic": False},
     {"name": "ifgsmf14.h", "record_types": (14,), "generic": False},
     {"name": "iggsmf17.h", "record_types": (17,), "generic": False},
     {"name": "iggsmf18.h", "record_types": (18,), "generic": False},
