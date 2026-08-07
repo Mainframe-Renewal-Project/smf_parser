@@ -15,9 +15,16 @@ from smf_parser import (
     read_dataset_records,
 )
 
+try:
+    "".encode("cp1047")
+except LookupError:
+    EBCDIC_TEST_ENCODING = "cp037"
+else:
+    EBCDIC_TEST_ENCODING = "cp1047"
+
 
 def ebcdic(value: str) -> bytes:
-    return value.encode("cp037")
+    return value.encode(EBCDIC_TEST_ENCODING)
 
 
 def standard_record(record_type: int, *, subtype: int = 0, system_id: str = "SYS1", body: bytes = b"") -> bytes:
@@ -109,10 +116,21 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertIsNone(records[0].rdw)
         self.assertEqual(records[0].c_headers[0].name, "ifasmfr.h")
 
-    def test_skips_incomplete_dataset_chunks_by_default(self) -> None:
+    def test_reassembles_continuation_dataset_chunks_by_default(self) -> None:
         smf_record = standard_record(30, subtype=2, body=b"a" * 2000)
 
         records = list(read_dataset_records([smf_record[:1408], smf_record[1408:]], header_catalog=header_catalog(30)))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].record_type, 30)
+        self.assertEqual(records[0].subtype, 2)
+        self.assertEqual(records[0].data, smf_record)
+
+    def test_does_not_merge_incomplete_chunks_with_new_smf_headers(self) -> None:
+        first = standard_record(30, subtype=2, body=b"a" * 2000)[:1408]
+        second = standard_record(30, subtype=3, body=b"b" * 2000)[:896]
+
+        records = list(read_dataset_records([first, second], header_catalog=header_catalog(30)))
 
         self.assertEqual(records, [])
 

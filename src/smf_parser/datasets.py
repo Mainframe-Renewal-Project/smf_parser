@@ -12,6 +12,7 @@ from .reader import (
     RecordFormat,
     SMFHeader,
     SMFRecord,
+    decode_ebcdic,
     parse_header,
     read_records,
 )
@@ -122,29 +123,39 @@ def _read_smf_dataset_records(
     system_ids: Collection[str] | None,
 ) -> Iterator[SMFRecord]:
     logical_offset = 0
+    buffer = bytearray()
+    buffer_offset = 0
 
     for data in records:
-        if skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
+        if skip_short_records and not buffer and len(data) < _MIN_SMF_RECORD_LENGTH:
             logical_offset += len(data)
             continue
 
         selected_format = _detect_dataset_record_format(data) if record_format == "auto" else "smf"
-        if selected_format == "rdw":
+        if not buffer and selected_format == "rdw":
             yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset, header_catalog=header_catalog)
             logical_offset += len(data)
             continue
 
-        buffer = bytearray(data)
+        if buffer and _looks_like_smf_record_start(data, system_ids=system_ids):
+            if not skip_short_records:
+                parse_header(bytes(buffer), offset=buffer_offset)
+            buffer.clear()
+
+        if not buffer:
+            buffer_offset = logical_offset
+        buffer.extend(data)
         yield from _drain_smf_buffer(
             buffer,
-            buffer_offset=logical_offset,
+            buffer_offset=buffer_offset,
             skip_invalid_records=skip_short_records,
             header_catalog=header_catalog,
             system_ids=system_ids,
         )
-        if buffer and not skip_short_records:
-            parse_header(bytes(buffer), offset=logical_offset + len(data) - len(buffer))
         logical_offset += len(data)
+
+    if buffer and not skip_short_records:
+        parse_header(bytes(buffer), offset=buffer_offset)
 
 
 def _drain_smf_buffer(
@@ -173,7 +184,6 @@ def _drain_smf_buffer(
         if record_length > len(buffer):
             if not skip_invalid_records:
                 parse_header(bytes(buffer), offset=buffer_offset + consumed)
-            del buffer[:]
             break
 
         data = bytes(buffer[:record_length])
@@ -219,6 +229,26 @@ def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] |
         return False
     return header.subsystem_id is None or _is_plausible_identifier(header.subsystem_id, allow_blank=True)
 
+
+def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | None) -> bool:
+    if len(data) < _MIN_SMF_RECORD_LENGTH:
+        return False
+
+    record_length = int.from_bytes(data[0:2], "big")
+    if record_length & 0x8000:
+        record_length &= 0x7FFF
+    if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
+        return False
+
+    time_hundredths = int.from_bytes(data[6:10], "big", signed=True)
+    if not 0 <= time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
+        return False
+    if not _is_plausible_identifier(data[14:18], allow_blank=False):
+        return False
+    if system_ids is not None and decode_ebcdic(data[14:18]) not in system_ids:
+        return False
+    return len(data) < 24 or _is_plausible_identifier(data[18:22], allow_blank=True)
+
 def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatalog:
     catalog = HeaderCatalog.discover() if header_catalog is None else header_catalog
     if not catalog.headers:
@@ -231,7 +261,7 @@ def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
     if not stripped:
         return allow_blank
     try:
-        text = stripped.decode("cp037")
+        text = decode_ebcdic(stripped)
     except UnicodeDecodeError:
         return False
     return all(character.isalnum() or character in "#$@_" for character in text)

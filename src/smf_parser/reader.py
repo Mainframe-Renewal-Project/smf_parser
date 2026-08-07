@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+from codecs import lookup
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -117,10 +118,20 @@ class SMFRecord:
         return self.header_definitions
 
 
-def decode_ebcdic(value: bytes, *, encoding: str = "cp037") -> str:
+def decode_ebcdic(value: bytes, *, encoding: str = "cp1047") -> str:
     """Decode a fixed-width EBCDIC field and strip EBCDIC spaces and NULs."""
 
-    return value.rstrip(b"\x40\x00").decode(encoding, errors="replace")
+    return value.rstrip(b"\x40\x00").decode(_available_ebcdic_encoding(encoding), errors="replace")
+
+
+def _available_ebcdic_encoding(encoding: str) -> str:
+    try:
+        lookup(encoding)
+    except LookupError:
+        if encoding.lower().replace("-", "") == "cp1047":
+            return "cp037"
+        raise
+    return encoding
 
 
 def parse_header(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SMFHeader:
