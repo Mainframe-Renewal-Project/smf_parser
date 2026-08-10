@@ -52,12 +52,11 @@ def parse_record(
     """Parse a supported SMF record body using its compiled IBM C header."""
 
     if isinstance(record, SMFRecord):
-        data = record.body
+        data = record.data
         record_type = record.record_type
     else:
-        raw_data = bytes(record)
-        header = parse_header(raw_data)
-        data = raw_data[header.header_length :]
+        data = bytes(record)
+        header = parse_header(data)
         record_type = header.record_type
     try:
         fields = _native_fields(record_type, data)

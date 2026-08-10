@@ -21,7 +21,7 @@ DEFAULT_IBM_INCLUDE_DIR = Path("/usr/include/IBM")
 ROOT = Path(__file__).parent
 HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
 FIELD_RE = re.compile(
-    r"^\s*(?:unsigned\s+char|char|u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
+    r"^\s*(?P<type>unsigned\s+char|char|u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
     r"\s+(?P<name>[A-Za-z_]\w*)"
     r"(?:\[(?P<array>\d+)\])?"
     r"(?:\s*:\s*(?P<bits>\d+))?\s*;"
@@ -226,6 +226,30 @@ def _generate_record_parser_source(
         "    return result;",
         "}",
         "",
+        "static unsigned long long read_unsigned_be(const unsigned char *data, ",
+        "Py_ssize_t length) {",
+        "    unsigned long long value = 0;",
+        "    Py_ssize_t index;",
+        "    for (index = 0; index < length; index++) {",
+        "        value = (value << 8) | data[index];",
+        "    }",
+        "    return value;",
+        "}",
+        "",
+        "static long long read_signed_be(const unsigned char *data, ",
+        "Py_ssize_t length) {",
+        "    unsigned long long value = read_unsigned_be(data, length);",
+        "    unsigned long long sign_bit;",
+        "    if (length <= 0 || length >= (Py_ssize_t)sizeof(unsigned long long)) {",
+        "        return (long long)value;",
+        "    }",
+        "    sign_bit = 1ULL << ((length * 8) - 1);",
+        "    if (value & sign_bit) {",
+        "        value |= (~0ULL) << (length * 8);",
+        "    }",
+        "    return (long long)value;",
+        "}",
+        "",
     ]
 
     for record in records:
@@ -339,62 +363,107 @@ def _record_struct_name(record_type: int, structs: dict[str, str]) -> str | None
 def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
     fields: list[dict[str, object]] = []
     seen: set[str] = set()
+    bit_offset = 0
     for raw_line in body.splitlines():
+        if not raw_line.startswith("  ") or raw_line.startswith("    "):
+            continue
         line = raw_line.split("/*", maxsplit=1)[0].strip()
         match = FIELD_RE.match(line)
         if match is None:
             continue
         name = match.group("name")
+        c_type = " ".join(match.group("type").split())
         array_length = int(match.group("array")) if match.group("array") else 0
+        field_bits = int(match.group("bits")) if match.group("bits") else 0
         if match.group("array") and array_length == 0:
             continue
         if name in seen or name.endswith(("_end_v1", "_end_v2", "_end_v3")):
             continue
+        if field_bits:
+            offset = bit_offset // 8
+            bit_offset += field_bits
+            if offset * 8 != bit_offset - field_bits or field_bits % 8:
+                continue
+            size = field_bits // 8
+        else:
+            if bit_offset % 8:
+                bit_offset += 8 - (bit_offset % 8)
+            offset = bit_offset // 8
+            size = _c_field_size(c_type) * (array_length or 1)
+            bit_offset += size * 8
         fields.append(
             {
                 "name": name,
+                "type": c_type,
                 "array": array_length,
-                "bits": int(match.group("bits")) if match.group("bits") else 0,
+                "bits": field_bits,
+                "offset": offset,
+                "size": size,
+                "signed": _c_field_is_signed(c_type),
             }
         )
         seen.add(name)
     return tuple(fields)
 
 
+def _c_field_size(c_type: str) -> int:
+    return {
+        "char": 1,
+        "unsigned char": 1,
+        "uint8_t": 1,
+        "int8_t": 1,
+        "uint16_t": 2,
+        "int16_t": 2,
+        "uint32_t": 4,
+        "int32_t": 4,
+        "uint64_t": 8,
+        "int64_t": 8,
+    }[c_type]
+
+
+def _c_field_is_signed(c_type: str) -> bool:
+    return c_type.startswith("int") or c_type == "char"
+
+
 def _record_parser_function(record: dict[str, object]) -> list[str]:
     struct_name = str(record["struct_name"])
     record_type = int(record["record_type"])
+    minimum_size = max(
+        int(field["offset"]) + int(field["size"]) for field in record["fields"]
+    )
     lines = [
         f"static PyObject *parse_{struct_name}(Py_buffer *view) {{",
-        f"    const struct {struct_name} *record;",
+        "    const unsigned char *data;",
         "    PyObject *result;",
-        f"    if (view->len < (Py_ssize_t)sizeof(struct {struct_name})) {{",
+        f"    if (view->len < (Py_ssize_t){minimum_size}) {{",
         f"        PyErr_SetString(PyExc_ValueError, \"SMF type {record_type} "
         "record is shorter than its fixed C header structure\");",
         "        return NULL;",
         "    }",
-        f"    record = (const struct {struct_name} *)view->buf;",
+        "    data = (const unsigned char *)view->buf;",
         "    result = PyDict_New();",
         "    if (result == NULL) { return NULL; }",
     ]
     for field in record["fields"]:
         field_name = str(field["name"])
+        offset = int(field["offset"])
+        size = int(field["size"])
         if int(field["array"]):
             lines.extend(
                 [
                     f"    if (set_bytes(result, \"{field_name}\", "
-                    f"record->{field_name}, "
-                    f"(Py_ssize_t)sizeof(record->{field_name})) < 0) {{",
+                    f"data + {offset}, (Py_ssize_t){size}) < 0) {{",
                     "        Py_DECREF(result);",
                     "        return NULL;",
                     "    }",
                 ]
             )
         else:
+            reader = "read_signed_be" if bool(field["signed"]) else "read_unsigned_be"
             lines.extend(
                 [
                     f"    if (set_long(result, \"{field_name}\", "
-                    f"(long long)record->{field_name}) < 0) {{",
+                    f"{reader}(data + {offset}, (Py_ssize_t){size})) < 0) {{",
                     "        Py_DECREF(result);",
                     "        return NULL;",
                     "    }",
