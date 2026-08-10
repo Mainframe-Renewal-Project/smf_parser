@@ -266,6 +266,7 @@ def _read_native_vbs_smf_records(
 
 def _iter_native_vbs_logical_records(chunks: Iterable[bytes]) -> Iterator[bytes]:
     spanned_record = bytearray()
+    spanned_record_length = 0
     for chunk in chunks:
         segments = _native_smf_record_segment(chunk)
         if segments is None:
@@ -274,23 +275,37 @@ def _iter_native_vbs_logical_records(chunks: Iterable[bytes]) -> Iterator[bytes]
             segments = _vbs_record_segment(chunk)
         if segments is None:
             spanned_record.clear()
+            spanned_record_length = 0
             yield chunk
             continue
 
         for segment_control, segment_data in segments:
             if segment_control == _VBS_SEGMENT_COMPLETE:
                 spanned_record.clear()
+                spanned_record_length = 0
                 yield segment_data
             elif segment_control == _VBS_SEGMENT_FIRST:
                 spanned_record = bytearray(segment_data)
+                spanned_record_length = _declared_smf_record_length(segment_data)
             elif segment_control == _VBS_SEGMENT_MIDDLE:
                 if spanned_record:
                     spanned_record.extend(segment_data)
             elif segment_control == _VBS_SEGMENT_LAST:
                 if spanned_record:
                     spanned_record.extend(segment_data)
-                    yield bytes(spanned_record)
+                    if len(spanned_record) == spanned_record_length:
+                        yield bytes(spanned_record)
                     spanned_record.clear()
+                    spanned_record_length = 0
+
+
+def _declared_smf_record_length(data: bytes) -> int:
+    if len(data) < 2:
+        return 0
+    record_length = int.from_bytes(data[0:2], "big")
+    if record_length & 0x8000:
+        record_length &= 0x7FFF
+    return record_length
 
 
 def _native_smf_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
