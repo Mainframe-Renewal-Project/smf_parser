@@ -643,8 +643,10 @@ def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatal
     return catalog
 
 
-def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
-    stripped = value.rstrip(b"\x40\x00")
+def _is_plausible_identifier(
+    value: bytes | bytearray | memoryview, *, allow_blank: bool
+) -> bool:
+    stripped = bytes(value).rstrip(b"\x40\x00")
     if not stripped:
         return allow_blank
     text = decode_ebcdic(stripped)

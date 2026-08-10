@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pysmf.datasets as dataset_module
+from pysmf.datasets import _is_plausible_identifier
 from pysmf import (
     TruncatedSMFRecordError,
     ZOAUMissingError,
@@ -76,6 +77,11 @@ def invalid_length_with_embedded_supported_candidate() -> bytes:
 
 
 class DatasetReaderTests(unittest.TestCase):
+    def test_plausible_identifier_accepts_memoryview(self) -> None:
+        self.assertTrue(
+            _is_plausible_identifier(memoryview(ebcdic("YCPU")), allow_blank=False)
+        )
+
     def test_reads_dataset_records_that_are_smf_records(self) -> None:
         records = list(
             read_dataset_records(

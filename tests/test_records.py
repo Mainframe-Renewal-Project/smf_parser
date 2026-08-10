@@ -37,6 +37,23 @@ def native_type80_fields() -> dict[str, object]:
 
 
 class StructuredRecordTests(unittest.TestCase):
+    def test_parse_record_passes_body_to_generated_native_parser(self) -> None:
+        from pysmf import records
+
+        calls = []
+        body = b"type-specific-data"
+
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            calls.append((record_type, data))
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
+
+        with patch.object(records, "_native", native):
+            parse_record(standard_record(80, body=body))
+
+        self.assertEqual(calls, [(80, body)])
+
     def test_parse_record_uses_generated_native_parser(self) -> None:
         from pysmf import records
 

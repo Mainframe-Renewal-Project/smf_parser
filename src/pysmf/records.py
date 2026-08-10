@@ -51,12 +51,14 @@ def parse_record(
 ) -> StructuredSMFRecord:
     """Parse a supported SMF record body using its compiled IBM C header."""
 
-    data = record.data if isinstance(record, SMFRecord) else bytes(record)
-    record_type = (
-        record.record_type
-        if isinstance(record, SMFRecord)
-        else parse_header(data).record_type
-    )
+    if isinstance(record, SMFRecord):
+        data = record.body
+        record_type = record.record_type
+    else:
+        raw_data = bytes(record)
+        header = parse_header(raw_data)
+        data = raw_data[header.header_length :]
+        record_type = header.record_type
     try:
         fields = _native_fields(record_type, data)
     except NotImplementedError as error:
