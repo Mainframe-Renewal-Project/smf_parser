@@ -13,8 +13,9 @@ dynamic = ["version"]
 Homepage = "https://github.com/Mainframe-Renewal-Project/smf_parser"
 Issues = "https://github.com/Mainframe-Renewal-Project/smf_parser/issues"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["pysmf", "smf_parser"]
 
 # This is required for dynamic versioning to work
 [tool.setuptools_scm]
