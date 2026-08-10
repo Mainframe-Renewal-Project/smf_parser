@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pysmf.datasets as dataset_module
 from pysmf import (
     TruncatedSMFRecordError,
     ZOAUMissingError,
@@ -267,6 +268,13 @@ class DatasetReaderTests(unittest.TestCase):
             self.assertRaises(ZOAUUnsupportedDatasetError),
         ):
             list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
+
+    def test_detects_relative_gdg_names_without_exception_parsing(self) -> None:
+        self.assertTrue(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD(-1)"))
+        self.assertTrue(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD(0)"))
+        self.assertFalse(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD(+1)"))
+        self.assertFalse(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD(ABC)"))
+        self.assertFalse(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD"))
 
     def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
         calls: list[tuple[str, int, int, bool]] = []

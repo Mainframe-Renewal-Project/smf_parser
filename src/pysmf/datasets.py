@@ -209,10 +209,17 @@ def _is_relative_gdg_name(dataset_name: str) -> bool:
     if "(" not in dataset_name or not dataset_name.endswith(")"):
         return False
     relative_text = dataset_name[:-1].split("(", maxsplit=1)[1]
-    try:
-        return int(relative_text) <= 0
-    except ValueError:
-        return False
+    relative_generation = _relative_gdg_generation(relative_text)
+    return relative_generation is not None and relative_generation <= 0
+
+
+def _relative_gdg_generation(relative_text: str) -> int | None:
+    if not relative_text:
+        return None
+    digits = relative_text[1:] if relative_text[0] in "+-" else relative_text
+    if not digits.isdigit():
+        return None
+    return int(relative_text)
 
 
 def _read_native_vbs_dataset_records(
@@ -376,9 +383,8 @@ def _resolve_relative_gdg_name(dataset_name: str, entries) -> str:
         return dataset_name
 
     base, relative_text = dataset_name[:-1].split("(", maxsplit=1)
-    try:
-        relative_generation = int(relative_text)
-    except ValueError:
+    relative_generation = _relative_gdg_generation(relative_text)
+    if relative_generation is None:
         return dataset_name
     if relative_generation > 0:
         return dataset_name
@@ -638,10 +644,7 @@ def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
     stripped = value.rstrip(b"\x40\x00")
     if not stripped:
         return allow_blank
-    try:
-        text = decode_ebcdic(stripped)
-    except UnicodeDecodeError:
-        return False
+    text = decode_ebcdic(stripped)
     return all(character.isalnum() or character in "#$@_" for character in text)
 
 
