@@ -220,3 +220,11 @@ __marimo__/
 # C++ stuff
 *.so
 *.o
+
+# Local IBM z/OS headers for test/build development.
+# Keep copied headers out of git; point PYSMF_ZOS_INCLUDE at local_headers/zos.
+local_headers/*
+!local_headers/README.md
+!local_headers/zos/
+local_headers/zos/*
+!local_headers/zos/.gitkeep
