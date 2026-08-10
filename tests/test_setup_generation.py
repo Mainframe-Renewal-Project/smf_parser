@@ -145,7 +145,8 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("base_offset += data_offset", variable_parser)
         self.assertIn("int appended = 0", variable_parser)
         self.assertIn("return appended", variable_parser)
-        self.assertIn("SMF variable section offset is outside the record", variable_parser)
+        self.assertIn("section_count > 4096", variable_parser)
+        self.assertIn("return 0", variable_parser)
         self.assertIn("SMF variable section length is outside the record", variable_parser)
 
     def test_native_section_directory_can_use_header_anchor_without_count(

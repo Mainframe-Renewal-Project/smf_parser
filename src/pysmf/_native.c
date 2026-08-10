@@ -148,17 +148,16 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
     if (section_count == 0) {
         return 0;
     }
-    if (section_offset == 0 || type_size == 0 || length_size == 0) {
-        PyErr_SetString(PyExc_ValueError, "SMF variable section metadata has a zero offset or field size");
+    if (type_size == 0 || length_size == 0) {
+        PyErr_SetString(PyExc_ValueError, "SMF variable section metadata has a zero field size");
         return -1;
     }
-    if (section_count > 4096 || type_size > 2 || length_size > 2 || data_offset > 16) {
+    if (type_size > 2 || length_size > 2 || data_offset > 4096) {
         PyErr_SetString(PyExc_ValueError, "SMF variable section metadata is outside supported bounds");
         return -1;
     }
-    if (section_offset > (unsigned long long)record_length) {
-        PyErr_SetString(PyExc_ValueError, "SMF variable section offset is outside the record");
-        return -1;
+    if (section_offset == 0 || section_count > 4096 || section_offset > (unsigned long long)record_length) {
+        return 0;
     }
     base_offset = section_offset;
     for (occurrence = 0; occurrence < section_count; occurrence++) {
