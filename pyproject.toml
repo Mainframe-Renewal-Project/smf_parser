@@ -13,9 +13,6 @@ dynamic = ["version"]
 Homepage = "https://github.com/Mainframe-Renewal-Project/smf_parser"
 Issues = "https://github.com/Mainframe-Renewal-Project/smf_parser/issues"
 
-[project.scripts]
-pysmf-racf-events = "pysmf.racf_events:main"
-
 # This is required for dynamic versioning to work
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
