@@ -144,6 +144,7 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
     PyObject *list;
     unsigned long long occurrence;
     unsigned long long base_offset;
+    int appended = 0;
     if (section_count == 0) {
         return 0;
     }
@@ -157,10 +158,6 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
     }
     if (section_offset > (unsigned long long)record_length) {
         PyErr_SetString(PyExc_ValueError, "SMF variable section offset is outside the record");
-        return -1;
-    }
-    list = section_list(dict, key);
-    if (list == NULL) {
         return -1;
     }
     base_offset = section_offset;
@@ -185,12 +182,17 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
             PyErr_SetString(PyExc_ValueError, "SMF variable section length is outside the record");
             return -1;
         }
+        list = section_list(dict, key);
+        if (list == NULL) {
+            return -1;
+        }
         if (append_section(list, data_type, data + payload_offset, (Py_ssize_t)section_length, (Py_ssize_t)payload_offset) < 0) {
             return -1;
         }
+        appended++;
         base_offset = next_offset;
     }
-    return (int)section_count;
+    return appended;
 }
 
 int append_self_defining_section_directory(PyObject *dict, const char *key, const unsigned char *data, Py_ssize_t record_length, unsigned long long directory, unsigned long long count) {

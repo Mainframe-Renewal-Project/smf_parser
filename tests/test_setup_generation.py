@@ -143,6 +143,8 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("PyErr_SetString(PyExc_ValueError", variable_parser)
         self.assertIn("if (data_type == 0 && section_length == 0)", variable_parser)
         self.assertIn("base_offset += data_offset", variable_parser)
+        self.assertIn("int appended = 0", variable_parser)
+        self.assertIn("return appended", variable_parser)
         self.assertIn("SMF variable section offset is outside the record", variable_parser)
         self.assertIn("SMF variable section length is outside the record", variable_parser)
 
