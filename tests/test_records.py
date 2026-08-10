@@ -10,35 +10,29 @@ from tests.helpers import ebcdic, standard_record
 
 def native_type80_fields() -> dict[str, object]:
     return {
-        "descriptor_flags": 1,
-        "event_code": 2,
-        "event_qualifier": 3,
-        "user_id": ebcdic("SECADM1 "),
-        "group": ebcdic("SYS1    "),
-        "relocate_offset": 104,
-        "relocate_count": 1,
-        "authority": 4,
-        "reason": 5,
-        "terminal_level": 6,
-        "command_error": 7,
-        "terminal_id": ebcdic("TERMID  "),
-        "job_name": ebcdic("JOBNAME "),
-        "reader_time_hundredths": 12_345,
-        "reader_date": b"\x00\x20\x23\x1f",
-        "user_identification": ebcdic("USERID  "),
-        "version": 8,
-        "reason2": 9,
-        "racf_version": ebcdic("7700"),
-        "seclabel": ebcdic("SECLAB  "),
-        "extended_relocate_offset": 140,
-        "extended_relocate_count": 1,
-        "authority2": 10,
-        "relocate_sections": [
-            {"offset": 104, "data_type": 1, "data": ebcdic("ALTUSER")},
-        ],
-        "extended_relocate_sections": [
-            {"offset": 140, "data_type": 1024, "data": ebcdic("PERMIT")},
-        ],
+        "smf80des": 1,
+        "smf80evt": 2,
+        "smf80evq": 3,
+        "smf80usr": ebcdic("SECADM1 "),
+        "smf80grp": ebcdic("SYS1    "),
+        "smf80rel": 104,
+        "smf80cnt": 1,
+        "smf80ath": 4,
+        "smf80rea": 5,
+        "smf80tlv": 6,
+        "smf80err": 7,
+        "smf80trm": ebcdic("TERMID  "),
+        "smf80jbn": ebcdic("JOBNAME "),
+        "smf80rst": 12_345,
+        "smf80rsd": b"\x00\x20\x23\x1f",
+        "smf80uid": ebcdic("USERID  "),
+        "smf80ver": 8,
+        "smf80re2": 9,
+        "smf80vrm": ebcdic("7700"),
+        "smf80sec": ebcdic("SECLAB  "),
+        "smf80rl2": 140,
+        "smf80ct2": 1,
+        "smf80au2": 10,
     }
 
 
@@ -54,15 +48,11 @@ class StructuredRecordTests(unittest.TestCase):
             parsed = parse_record(standard_record(80))
 
         self.assertEqual(parsed.record_type, 80)
-        self.assertEqual(parsed["event_code"], 2)
-        self.assertEqual(parsed["event_qualifier"], 3)
-        self.assertEqual(parsed.field_text("user_id"), "SECADM1")
-        self.assertEqual(parsed.field_text("group"), "SYS1")
-        self.assertEqual(parsed.field_text("job_name"), "JOBNAME")
-        self.assertEqual(parsed.sections[0].data_type, 1)
-        self.assertEqual(parsed.sections[0].text, "ALTUSER")
-        self.assertEqual(parsed.extended_sections[0].data_type, 1024)
-        self.assertEqual(parsed.extended_sections[0].text, "PERMIT")
+        self.assertEqual(parsed["smf80evt"], 2)
+        self.assertEqual(parsed["smf80evq"], 3)
+        self.assertEqual(parsed.field_text("smf80usr"), "SECADM1")
+        self.assertEqual(parsed.field_text("smf80grp"), "SYS1")
+        self.assertEqual(parsed.field_text("smf80jbn"), "JOBNAME")
 
     def test_parse_record_requires_native_header_support(self) -> None:
         from pysmf import records

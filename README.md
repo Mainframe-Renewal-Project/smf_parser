@@ -57,9 +57,9 @@ for record in read_dataset("USER.SMF.UNLOAD(0)", record_types={80}):
     structured = parse_record(record)
     print(
         structured.record_type,
-        structured["event_code"],
-        structured.field_text("user_id"),
-        structured.field_text("job_name"),
+        structured["smf80evt"],
+        structured.field_text("smf80usr"),
+        structured.field_text("smf80jbn"),
     )
 ```
 
