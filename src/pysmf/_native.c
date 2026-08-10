@@ -151,17 +151,17 @@ int append_self_defining_section_directory(PyObject *dict, const char *key, cons
         return 0;
     }
     if (count == 0) {
-        count = ((unsigned long long)record_length - directory) / 8;
+        count = ((unsigned long long)record_length - directory) / 6;
         inferred_count = 1;
     }
-    if (count > ((unsigned long long)record_length - directory) / 8) {
+    if (count > ((unsigned long long)record_length - directory) / 6) {
         return 0;
     }
     for (index = 0; index < count; index++) {
-        Py_ssize_t entry_offset = (Py_ssize_t)(directory + (index * 8));
-        unsigned long long section_offset = read_unsigned_be(data + entry_offset, 4);
-        unsigned long long section_length = read_unsigned_be(data + entry_offset + 4, 2);
-        unsigned long long section_count = read_unsigned_be(data + entry_offset + 6, 2);
+        Py_ssize_t entry_offset = (Py_ssize_t)(directory + (index * 6));
+        unsigned long long section_offset = read_unsigned_be(data + entry_offset, 2);
+        unsigned long long section_length = read_unsigned_be(data + entry_offset + 2, 2);
+        unsigned long long section_count = read_unsigned_be(data + entry_offset + 4, 2);
         int triplet_sections = append_self_defining_triplet_sections(
                 dict,
                 key,

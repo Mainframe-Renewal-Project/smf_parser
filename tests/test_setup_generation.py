@@ -101,7 +101,11 @@ class SetupGenerationTests(unittest.TestCase):
             native, "append_self_defining_section_directory"
         )
 
-        self.assertIn("count = ((unsigned long long)record_length - directory) / 8", directory_parser)
+        self.assertIn("count = ((unsigned long long)record_length - directory) / 6", directory_parser)
+        self.assertIn("directory + (index * 6)", directory_parser)
+        self.assertIn("section_offset = read_unsigned_be(data + entry_offset, 2)", directory_parser)
+        self.assertIn("section_length = read_unsigned_be(data + entry_offset + 2, 2)", directory_parser)
+        self.assertIn("section_count = read_unsigned_be(data + entry_offset + 4, 2)", directory_parser)
         self.assertIn("inferred_count = 1", directory_parser)
         self.assertIn(
             "if (triplet_sections == 0 && (inferred_count || appended > 0))",
