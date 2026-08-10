@@ -351,6 +351,8 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
         FILE *file = fopen(dataset_path, open_modes[mode_index]);
         PyObject *result;
         int skipped = 0;
+        int read_count = 0;
+        int saw_dataset_record = 0;
 
         if (file == NULL) {
             last_open_errno = errno;
@@ -367,6 +369,7 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
         for (;;) {
             size_t bytes_read = fread(buffer, 1, sizeof(buffer), file);
             PyObject *record;
+            int reached_record_limit;
 
             if (bytes_read == 0) {
                 if (feof(file)) {
@@ -379,13 +382,21 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
             }
 
             if (skipped < offset) {
+                saw_dataset_record = 1;
                 skipped += 1;
                 continue;
             }
 
+            saw_dataset_record = 1;
+            read_count += 1;
+            reached_record_limit = !tail && records > 0 && read_count >= records;
+
             if (record_type_filter != NULL) {
                 uint16_t record_type = 0;
-                if (!smf_record_type_from_data(buffer, (Py_ssize_t)bytes_read, &record_type) || !record_type_filter[record_type]) {
+                if (smf_record_type_from_data(buffer, (Py_ssize_t)bytes_read, &record_type) && !record_type_filter[record_type]) {
+                    if (reached_record_limit) {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -406,7 +417,7 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
             }
             Py_DECREF(record);
 
-            if (!tail && records > 0 && PyList_GET_SIZE(result) >= records) {
+            if (reached_record_limit) {
                 break;
             }
         }
@@ -417,7 +428,7 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
             return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
         }
 
-        if (PyList_GET_SIZE(result) == 0 && open_modes[mode_index + 1] != NULL) {
+        if (!saw_dataset_record && PyList_GET_SIZE(result) == 0 && open_modes[mode_index + 1] != NULL) {
             Py_DECREF(result);
             continue;
         }
