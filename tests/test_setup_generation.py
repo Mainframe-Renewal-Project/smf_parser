@@ -128,6 +128,61 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("read_unsigned_be(data + 32, 2)", lines)
         self.assertIn("read_unsigned_be(data + 34, 2)", lines)
 
+    def test_record_fields_are_extracted_by_brace_depth_not_indent(self) -> None:
+        module = setup_module()
+        fields = module._record_struct_fields(
+            """
+    uint16_t smf21len;
+    union {
+      struct {
+        uint16_t nested_field;
+      } nested;
+    } view;
+    uint8_t smf21rty;
+"""
+        )
+
+        self.assertEqual(
+            [field["name"] for field in fields], ["smf21len", "smf21rty"]
+        )
+        self.assertEqual([field["offset"] for field in fields], [0, 2])
+
+    def test_record_fields_use_first_top_level_union_member(self) -> None:
+        module = setup_module()
+        fields = module._record_struct_fields(
+            """
+  union {
+    unsigned char smf21hdr[104];
+    struct {
+      uint16_t smf21len;
+      uint8_t smf21rty;
+    } decoded;
+  } header;
+  uint16_t trailing;
+"""
+        )
+
+        self.assertEqual(
+            [field["name"] for field in fields], ["smf21hdr", "trailing"]
+        )
+        self.assertEqual([field["offset"] for field in fields], [0, 104])
+
+    def test_record_struct_names_include_common_ibm_variants(self) -> None:
+        module = setup_module()
+        structs = {
+            "smf83rcd": "",
+            "smf124rec": "",
+            "smfr98": "",
+            "smfrcd6a": "",
+            "smfrcd10": "",
+        }
+
+        self.assertEqual(module._record_struct_name(83, structs), "smf83rcd")
+        self.assertEqual(module._record_struct_name(124, structs), "smf124rec")
+        self.assertEqual(module._record_struct_name(98, structs), "smfr98")
+        self.assertEqual(module._record_struct_name(106, structs), "smfrcd6a")
+        self.assertIsNone(module._record_struct_name(16, structs))
+
 
 if __name__ == "__main__":
     unittest.main()

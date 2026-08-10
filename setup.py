@@ -321,11 +321,16 @@ def _header_structs(header_text: str) -> dict[str, str]:
 
 
 def _record_struct_name(record_type: int, structs: dict[str, str]) -> str | None:
-    candidates = (
+    candidates = [
         f"smfrcd{record_type:02d}",
         f"smfrcd{record_type}",
         f"smf{record_type}",
-    )
+        f"smf{record_type}rcd",
+        f"smf{record_type}rec",
+        f"smfr{record_type}",
+    ]
+    if record_type >= 100:
+        candidates.append(f"smfrcd{record_type:x}")
     for candidate in candidates:
         if candidate in structs:
             return candidate
@@ -336,10 +341,39 @@ def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
     fields: list[dict[str, object]] = []
     seen: set[str] = set()
     bit_offset = 0
+    brace_depth = 0
+    top_level_union_depth = 0
+    top_level_union_start = 0
+    top_level_union_size = 0
+    top_level_union_has_field = False
     for raw_line in body.splitlines():
-        if not raw_line.startswith("  ") or raw_line.startswith("    "):
+        line_without_comment = raw_line.split("/*", maxsplit=1)[0]
+        line = line_without_comment.strip()
+        depth_before_line = brace_depth
+        starts_top_level_union = depth_before_line == 0 and line.startswith("union ")
+        brace_depth += line.count("{") - line.count("}")
+        if starts_top_level_union and top_level_union_depth == 0:
+            top_level_union_depth = brace_depth
+            top_level_union_start = bit_offset
+            top_level_union_size = 0
+            top_level_union_has_field = False
             continue
-        line = raw_line.split("/*", maxsplit=1)[0].strip()
+        if top_level_union_depth and brace_depth < top_level_union_depth:
+            bit_offset = max(bit_offset, top_level_union_start + top_level_union_size)
+            top_level_union_depth = 0
+            top_level_union_start = 0
+            top_level_union_size = 0
+            top_level_union_has_field = False
+            continue
+        if depth_before_line != 0:
+            if (
+                depth_before_line != top_level_union_depth
+                or top_level_union_has_field
+                or line.startswith(("struct ", "union "))
+            ):
+                continue
+        elif line.startswith(("struct ", "union ")):
+            continue
         match = FIELD_RE.match(line)
         if match is None:
             continue
@@ -352,17 +386,22 @@ def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
         if name in seen or name.endswith(("_end_v1", "_end_v2", "_end_v3")):
             continue
         if field_bits:
-            offset = bit_offset // 8
+            offset = (top_level_union_start if top_level_union_depth else bit_offset) // 8
             bit_offset += field_bits
             if offset * 8 != bit_offset - field_bits or field_bits % 8:
                 continue
             size = field_bits // 8
         else:
-            if bit_offset % 8:
-                bit_offset += 8 - (bit_offset % 8)
-            offset = bit_offset // 8
+            field_bit_offset = top_level_union_start if top_level_union_depth else bit_offset
+            if field_bit_offset % 8:
+                field_bit_offset += 8 - (field_bit_offset % 8)
+            offset = field_bit_offset // 8
             size = _c_field_size(c_type) * (array_length or 1)
-            bit_offset += size * 8
+            if top_level_union_depth:
+                top_level_union_size = max(top_level_union_size, size * 8)
+                top_level_union_has_field = True
+            else:
+                bit_offset = field_bit_offset + size * 8
         fields.append(
             {
                 "name": name,
