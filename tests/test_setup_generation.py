@@ -17,6 +17,8 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("section_offset = ", generated)
         self.assertIn("read_unsigned_be(data + entry_offset, 4);", generated)
         self.assertIn("directory = 24", generated)
+        self.assertIn("PyList_Size(list) > 0", generated)
+        self.assertIn("list, directory, data + offset", generated)
         self.assertNotIn("static int set_smf80_relocate_sections", generated)
         self.assertNotIn("static int set_smf80_extended_relocate_sections", generated)
 
