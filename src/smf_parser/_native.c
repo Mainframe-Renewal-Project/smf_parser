@@ -319,6 +319,7 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
     int tail = 0;
     PyObject *record_types = Py_None;
     unsigned char *record_type_filter = NULL;
+    int use_record_type_filter = 0;
     char dataset_path[512];
     unsigned char buffer[VBS_MAX_LOGICAL_RECORD_LENGTH];
     int mode_index;
@@ -334,6 +335,7 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
     if (!build_record_type_filter(record_types, &record_type_filter)) {
         return NULL;
     }
+    use_record_type_filter = record_type_filter != NULL;
 
     if (strncmp(dataset_name, "//", 2) == 0 || strncmp(dataset_name, "DD:", 3) == 0 || dataset_name[0] == '/') {
         if (snprintf(dataset_path, sizeof(dataset_path), "%s", dataset_name) >= (int)sizeof(dataset_path)) {
@@ -388,10 +390,14 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
             }
 
             saw_dataset_record = 1;
-            read_count += 1;
-            reached_record_limit = !tail && records > 0 && read_count >= records;
+            if (use_record_type_filter) {
+                read_count += 1;
+                reached_record_limit = !tail && records > 0 && read_count >= records;
+            } else {
+                reached_record_limit = !tail && records > 0 && PyList_GET_SIZE(result) + 1 >= records;
+            }
 
-            if (record_type_filter != NULL) {
+            if (use_record_type_filter) {
                 uint16_t record_type = 0;
                 if (smf_record_type_from_data(buffer, (Py_ssize_t)bytes_read, &record_type) && !record_type_filter[record_type]) {
                     if (reached_record_limit) {
@@ -428,7 +434,11 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
             return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
         }
 
-        if (!saw_dataset_record && PyList_GET_SIZE(result) == 0 && open_modes[mode_index + 1] != NULL) {
+        if (
+            PyList_GET_SIZE(result) == 0 &&
+            open_modes[mode_index + 1] != NULL &&
+            (!use_record_type_filter || !saw_dataset_record)
+        ) {
             Py_DECREF(result);
             continue;
         }
