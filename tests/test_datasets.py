@@ -85,7 +85,7 @@ def smf_record_segment(record: bytes, descriptor: int, start: int, end: int) -> 
 class DatasetReaderTests(unittest.TestCase):
     def test_plausible_identifier_accepts_memoryview(self) -> None:
         self.assertTrue(
-            _is_plausible_identifier(memoryview(ebcdic("YCPU")), allow_blank=False)
+            _is_plausible_identifier(memoryview(ebcdic("SYS1")), allow_blank=False)
         )
 
     def test_reads_dataset_records_that_are_smf_records(self) -> None:

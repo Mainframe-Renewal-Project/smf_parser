@@ -7,7 +7,7 @@ Put raw SMF data under `local_data/smf/`. Transfer files in binary mode so RDWs,
 Suggested naming examples:
 
 ```text
-local_data/smf/YCPU.G9173V00.smf
+local_data/smf/EXAMPLE.G0001V00.smf
 local_data/smf/racf-type81-sample.vbs
 local_data/smf/type80-records.bin
 ```
