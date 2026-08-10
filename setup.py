@@ -276,6 +276,11 @@ def _generate_record_parser_source(
         "    return result;",
         "}",
         "",
+        "static int section_list_has_entries(PyObject *dict, const char *key) {",
+        "    PyObject *list = PyDict_GetItemString(dict, key);",
+        "    return list != NULL && PyList_Check(list) && PyList_Size(list) > 0;",
+        "}",
+        "",
         "static int set_smf80_self_defining_sections(PyObject *dict, ",
         "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
         "unsigned long long directory, unsigned long long count) {",
@@ -321,6 +326,38 @@ def _generate_record_parser_source(
         "        return -1;",
         "    }",
         "    Py_DECREF(list);",
+        "    return 0;",
+        "}",
+        "",
+        "static int discover_smf80_self_defining_sections(PyObject *dict, ",
+        "const char *key, const unsigned char *data, Py_ssize_t record_length) {",
+        "    unsigned long long directory;",
+        "    if (section_list_has_entries(dict, key)) { return 0; }",
+        "    for (directory = 24; directory + 8 <= 280 && ",
+        "        directory + 8 <= (unsigned long long)record_length;",
+        "        directory += 4) {",
+        "        unsigned long long section_offset = ",
+        "            read_unsigned_be(data + directory, 4);",
+        "        unsigned long long section_length = ",
+        "            read_unsigned_be(data + directory + 4, 2);",
+        "        unsigned long long section_count = ",
+        "            read_unsigned_be(data + directory + 6, 2);",
+        "        if (section_offset < 24 || section_length == 0 || ",
+        "            section_count == 0 || section_length > 4096 || ",
+        "            section_count > 4096) {",
+        "            continue;",
+        "        }",
+        "        if (section_offset > (unsigned long long)record_length) {",
+        "            continue;",
+        "        }",
+        "        if (section_count > ",
+        "            ((unsigned long long)record_length - section_offset) / ",
+        "            section_length) {",
+        "            continue;",
+        "        }",
+        "        return set_smf80_self_defining_sections(",
+        "            dict, key, data, record_length, directory, 1);",
+        "    }",
         "    return 0;",
         "}",
         "",
@@ -553,6 +590,15 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
             )
     if record_type == 80:
         lines.extend(_smf80_section_parser_lines(fields_by_name))
+        lines.extend(
+            [
+                "    if (discover_smf80_self_defining_sections(",
+                "        result, \"relocate_sections\", data, view->len) < 0) {",
+                "        Py_DECREF(result);",
+                "        return NULL;",
+                "    }",
+            ]
+        )
     lines.extend(["    return result;", "}", ""])
     return lines
 

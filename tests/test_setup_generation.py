@@ -10,10 +10,13 @@ class SetupGenerationTests(unittest.TestCase):
         generated = setup_path.read_text(encoding="utf-8")
 
         self.assertIn("set_smf80_self_defining_sections", generated)
+        self.assertIn("discover_smf80_self_defining_sections", generated)
+        self.assertIn("section_list_has_entries", generated)
         self.assertIn('\\"relocate_sections\\"', generated)
         self.assertIn('\\"extended_relocate_sections\\"', generated)
         self.assertIn("section_offset = ", generated)
         self.assertIn("read_unsigned_be(data + entry_offset, 4);", generated)
+        self.assertIn("directory = 24", generated)
         self.assertNotIn("static int set_smf80_relocate_sections", generated)
         self.assertNotIn("static int set_smf80_extended_relocate_sections", generated)
 
