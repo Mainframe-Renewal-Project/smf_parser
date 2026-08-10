@@ -11,6 +11,7 @@ from tests.helpers import ebcdic, standard_record
 def native_type80_fields() -> dict[str, object]:
     return {
         "smf80des": 1,
+        "smf80rty": 80,
         "smf80evt": 2,
         "smf80evq": 3,
         "smf80usr": ebcdic("SECADM1 "),
@@ -98,6 +99,17 @@ class StructuredRecordTests(unittest.TestCase):
             raise ValueError("expected SMF record type 80")
 
         native = SimpleNamespace(parse_record=parse_record_error)
+
+        with patch.object(records, "_native", native):
+            with self.assertRaises(SMFParseError):
+                parse_record(standard_record(80))
+
+    def test_parse_record_rejects_shifted_native_fields(self) -> None:
+        from pysmf import records
+
+        fields = native_type80_fields()
+        fields["smf80rty"] = 0
+        native = SimpleNamespace(parse_record=lambda _record_type, _data: fields)
 
         with patch.object(records, "_native", native):
             with self.assertRaises(SMFParseError):

@@ -67,7 +67,9 @@ def parse_record(
     except ValueError as error:
         raise SMFParseError(str(error)) from error
 
-    return _structured_record(record_type, fields)
+    structured = _structured_record(record_type, fields)
+    _validate_structured_record(record_type, structured)
+    return structured
 
 
 def _native_fields(record_type: int, data: bytes | bytearray | memoryview):
@@ -109,6 +111,20 @@ def _bytes_field(fields: dict[str, int | bytes], key: str) -> bytes:
     if isinstance(value, bytes):
         return value
     raise TypeError(f"SMF field {key!r} is not a bytes field")
+
+
+def _validate_structured_record(
+    record_type: int, structured: StructuredSMFRecord
+) -> None:
+    type_field = f"smf{record_type}rty"
+    if type_field not in structured.fields:
+        return
+    parsed_type = structured.fields[type_field]
+    if parsed_type != record_type:
+        raise SMFParseError(
+            f"SMF type {record_type} structured parser returned record type "
+            f"{parsed_type}; rebuild pysmf so generated IBM header offsets match"
+        )
 
 
 def _sections(

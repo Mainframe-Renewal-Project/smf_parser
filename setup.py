@@ -250,6 +250,10 @@ def _generate_record_parser_source(
         "    return (long long)value;",
         "}",
         "",
+        "static int validate_record_type(const unsigned char *data, int expected) {",
+        "    return data[5] == (unsigned char)expected;",
+        "}",
+        "",
     ]
 
     for record in records:
@@ -441,6 +445,11 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         "        return NULL;",
         "    }",
         "    data = (const unsigned char *)view->buf;",
+        f"    if (!validate_record_type(data, {record_type})) {{",
+        f"        PyErr_SetString(PyExc_ValueError, \"SMF type {record_type} "
+        "structured parser received bytes with the wrong record type\");",
+        "        return NULL;",
+        "    }",
         "    result = PyDict_New();",
         "    if (result == NULL) { return NULL; }",
     ]
