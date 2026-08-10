@@ -450,8 +450,7 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
                 ]
             )
     lines.extend(_self_defining_triplet_parser_lines(fields))
-    if record_type == 80:
-        lines.extend(_smf80_section_parser_lines(fields_by_name))
+    lines.extend(_section_directory_parser_lines(fields_by_name))
     lines.extend(["    return result;", "}", ""])
     return lines
 
@@ -522,35 +521,18 @@ def _field_name_contains(field: dict[str, object], tokens: tuple[str, ...]) -> b
     return any(token in name for token in tokens)
 
 
-def _smf80_section_parser_lines(
+def _section_directory_parser_lines(
     fields_by_name: dict[str, dict[str, object]],
 ) -> list[str]:
     lines: list[str] = []
-    if {"smf80rel", "smf80cnt"}.issubset(fields_by_name):
-        relocate_offset = int(cast(int, fields_by_name["smf80rel"]["offset"]))
-        relocate_count_offset = int(
-            cast(int, fields_by_name["smf80cnt"]["offset"])
-        )
+    for offset_field, count_field in _section_directory_pairs(fields_by_name):
+        key = _section_directory_key(str(offset_field["name"]))
+        relocate_offset = int(cast(int, offset_field["offset"]))
+        relocate_count_offset = int(cast(int, count_field["offset"]))
         lines.extend(
             [
                 "    if (append_self_defining_section_directory(",
-                "        result, \"relocate_sections\", data, view->len,",
-                f"        read_unsigned_be(data + {relocate_offset}, 2),",
-                f"        read_unsigned_be(data + {relocate_count_offset}, 2)) < 0) {{",
-                "        Py_DECREF(result);",
-                "        return NULL;",
-                "    }",
-            ]
-        )
-    if {"smf80rl2", "smf80ct2"}.issubset(fields_by_name):
-        relocate_offset = int(cast(int, fields_by_name["smf80rl2"]["offset"]))
-        relocate_count_offset = int(
-            cast(int, fields_by_name["smf80ct2"]["offset"])
-        )
-        lines.extend(
-            [
-                "    if (append_self_defining_section_directory(",
-                "        result, \"extended_relocate_sections\", data, view->len,",
+                f"        result, \"{key}\", data, view->len,",
                 f"        read_unsigned_be(data + {relocate_offset}, 2),",
                 f"        read_unsigned_be(data + {relocate_count_offset}, 2)) < 0) {{",
                 "        Py_DECREF(result);",
@@ -559,6 +541,33 @@ def _smf80_section_parser_lines(
             ]
         )
     return lines
+
+
+def _section_directory_pairs(
+    fields_by_name: dict[str, dict[str, object]],
+) -> tuple[tuple[dict[str, object], dict[str, object]], ...]:
+    pairs: list[tuple[dict[str, object], dict[str, object]]] = []
+    for field_name, field in fields_by_name.items():
+        if not field_name.endswith(("rel", "rl2")):
+            continue
+        count_name = f"{field_name[:-3]}cnt" if field_name.endswith("rel") else None
+        if field_name.endswith("rl2"):
+            count_name = f"{field_name[:-3]}ct2"
+        if count_name is None or count_name not in fields_by_name:
+            continue
+        count_field = fields_by_name[count_name]
+        if int(cast(int, field["size"])) != 2:
+            continue
+        if int(cast(int, count_field["size"])) != 2:
+            continue
+        pairs.append((field, count_field))
+    return tuple(pairs)
+
+
+def _section_directory_key(offset_field_name: str) -> str:
+    if offset_field_name.endswith("rl2"):
+        return "extended_relocate_sections"
+    return "relocate_sections"
 
 
 setup(

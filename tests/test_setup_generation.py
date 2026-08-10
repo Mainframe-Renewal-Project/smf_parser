@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import types
 import unittest
 from pathlib import Path
 
@@ -12,6 +14,33 @@ def generated_setup_source() -> str:
 def native_source() -> str:
     native_path = Path(__file__).parents[1] / "src" / "pysmf" / "_native.c"
     return native_path.read_text(encoding="utf-8")
+
+
+def setup_module():
+    setup_path = Path(__file__).parents[1] / "setup.py"
+    source = setup_path.read_text(encoding="utf-8")
+    source = "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.startswith(("from setuptools", "from wheel"))
+    )
+    module = types.SimpleNamespace(__file__=str(setup_path))
+    namespace = module.__dict__
+    namespace.update(
+        {
+            "Extension": lambda *args, **kwargs: (args, kwargs),
+            "setup": lambda *args, **kwargs: None,
+            "CompileError": Exception,
+            "new_compiler": lambda: None,
+            "customize_compiler": lambda _compiler: None,
+            "get_platform": lambda: "test-platform",
+            "build_ext_base": object,
+            "build_py_base": object,
+            "bdist_wheel_base": object,
+        }
+    )
+    exec(compile(source, str(setup_path), "exec"), namespace)
+    return module
 
 
 def generated_function_source(source: str, name: str) -> str:
@@ -40,7 +69,7 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("_self_defining_triplet_parser_lines", generated)
         self.assertIn("_self_defining_triplets", generated)
         self.assertIn('\\"relocate_sections\\"', generated)
-        self.assertIn('\\"extended_relocate_sections\\"', generated)
+        self.assertIn("extended_relocate_sections", generated)
         self.assertIn("read_unsigned_be(data +", generated)
         self.assertIn("int append_self_defining_triplet_sections", native)
         self.assertIn("int append_self_defining_section_directory", native)
@@ -63,6 +92,26 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("append_section(", triplet_parser)
         self.assertNotIn("PyList_New(0);", triplet_parser)
         self.assertIn("int append_self_defining_triplet_sections", generated)
+
+    def test_section_directories_are_detected_from_rel_count_field_pairs(
+        self,
+    ) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf80rel": {"name": "smf80rel", "offset": 44, "size": 2},
+            "smf80cnt": {"name": "smf80cnt", "offset": 46, "size": 2},
+            "smf80rl2": {"name": "smf80rl2", "offset": 104, "size": 2},
+            "smf80ct2": {"name": "smf80ct2", "offset": 106, "size": 2},
+            "smf81rel": {"name": "smf81rel", "offset": 32, "size": 2},
+            "smf81cnt": {"name": "smf81cnt", "offset": 34, "size": 2},
+        }
+
+        lines = "\n".join(module._section_directory_parser_lines(fields_by_name))
+
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+        self.assertIn("read_unsigned_be(data + 32, 2)", lines)
+        self.assertIn("read_unsigned_be(data + 34, 2)", lines)
 
 
 if __name__ == "__main__":
