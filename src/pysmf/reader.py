@@ -144,6 +144,11 @@ def decode_smf_time_hundredths(value: bytes | bytearray | memoryview) -> int:
     """Decode an SMF time field to hundredths of a second after midnight."""
 
     data = bytes(value)
+    native = _native
+    if native is not None and len(data) == 4:
+        native_decode = getattr(native, "decode_smf_time_hundredths", None)
+        if native_decode is not None:
+            return native_decode(data)
     if len(data) == 4:
         nibbles = tuple(nibble for byte in data for nibble in (byte >> 4, byte & 0x0F))
         if nibbles[-1] in (0x0C, 0x0D, 0x0F) and all(
@@ -162,6 +167,11 @@ def is_packed_smf_date(value: bytes | bytearray | memoryview) -> bool:
     """Return whether bytes look like an SMF packed date, 0cyydddF."""
 
     data = bytes(value)
+    native = _native
+    if native is not None:
+        native_check = getattr(native, "is_packed_smf_date", None)
+        if native_check is not None:
+            return native_check(data)
     if len(data) != 4:
         return False
     nibbles = tuple(nibble for byte in data for nibble in (byte >> 4, byte & 0x0F))

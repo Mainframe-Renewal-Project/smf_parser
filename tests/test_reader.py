@@ -185,6 +185,23 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.subtype, 5)
         self.assertEqual(header.system_id_text, "SYS1")
 
+    def test_decode_smf_time_uses_native_helper_when_available(self) -> None:
+        from pysmf import reader
+
+        native = SimpleNamespace(decode_smf_time_hundredths=lambda data: 42)
+
+        with patch.object(reader, "_native", native):
+            self.assertEqual(reader.decode_smf_time_hundredths(b"\0\0\0\0"), 42)
+
+    def test_is_packed_smf_date_uses_native_helper_when_available(self) -> None:
+        from pysmf import reader
+
+        native = SimpleNamespace(is_packed_smf_date=lambda data: data == b"date")
+
+        with patch.object(reader, "_native", native):
+            self.assertTrue(reader.is_packed_smf_date(b"date"))
+            self.assertFalse(reader.is_packed_smf_date(b"nope"))
+
     def test_parse_extended_v2_header(self) -> None:
         record = extended_v2_record(1154, subtype=128, body=b"payload")
 
