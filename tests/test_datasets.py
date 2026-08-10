@@ -446,6 +446,21 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual([record.record_type for record in parsed], [30])
         self.assertEqual(parsed[0].data, record)
 
+    def test_read_dataset_reconstructs_spanned_native_smf_payloads(self) -> None:
+        record = standard_record(30, body=b"payload" * 100)
+        fake_native = native_reader([record[:128], record[128:256], record[256:]])
+
+        with patch(
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [30])
+        self.assertEqual(parsed[0].data, record)
+
     def test_read_dataset_records_filters_record_types(self) -> None:
         records = list(
             read_dataset_records(
