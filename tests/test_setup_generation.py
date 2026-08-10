@@ -93,6 +93,21 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertNotIn("PyList_New(0);", triplet_parser)
         self.assertIn("int append_self_defining_triplet_sections", generated)
 
+    def test_native_section_directory_can_use_header_anchor_without_count(
+        self,
+    ) -> None:
+        native = native_source()
+        directory_parser = generated_function_source(
+            native, "append_self_defining_section_directory"
+        )
+
+        self.assertIn("count = ((unsigned long long)record_length - directory) / 8", directory_parser)
+        self.assertIn("inferred_count = 1", directory_parser)
+        self.assertIn(
+            "if (triplet_sections == 0 && (inferred_count || appended > 0))",
+            directory_parser,
+        )
+
     def test_section_directories_are_detected_from_rel_count_field_pairs(
         self,
     ) -> None:

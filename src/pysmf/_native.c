@@ -137,16 +137,22 @@ int append_self_defining_triplet_sections(PyObject *dict, const char *key, const
             return -1;
         }
     }
-    return 0;
+    return (int)section_count;
 }
 
 int append_self_defining_section_directory(PyObject *dict, const char *key, const unsigned char *data, Py_ssize_t record_length, unsigned long long directory, unsigned long long count) {
     unsigned long long index;
-    if (directory == 0 || count == 0) {
+    int appended = 0;
+    int inferred_count = 0;
+    if (directory == 0) {
         return 0;
     }
     if (directory > (unsigned long long)record_length) {
         return 0;
+    }
+    if (count == 0) {
+        count = ((unsigned long long)record_length - directory) / 8;
+        inferred_count = 1;
     }
     if (count > ((unsigned long long)record_length - directory) / 8) {
         return 0;
@@ -156,7 +162,7 @@ int append_self_defining_section_directory(PyObject *dict, const char *key, cons
         unsigned long long section_offset = read_unsigned_be(data + entry_offset, 4);
         unsigned long long section_length = read_unsigned_be(data + entry_offset + 4, 2);
         unsigned long long section_count = read_unsigned_be(data + entry_offset + 6, 2);
-        if (append_self_defining_triplet_sections(
+        int triplet_sections = append_self_defining_triplet_sections(
                 dict,
                 key,
                 data,
@@ -164,9 +170,14 @@ int append_self_defining_section_directory(PyObject *dict, const char *key, cons
                 (unsigned long long)entry_offset,
                 section_offset,
                 section_length,
-                section_count) < 0) {
+                section_count);
+        if (triplet_sections < 0) {
             return -1;
         }
+        if (triplet_sections == 0 && (inferred_count || appended > 0)) {
+            break;
+        }
+        appended += triplet_sections;
     }
     return 0;
 }
