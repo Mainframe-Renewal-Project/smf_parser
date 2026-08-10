@@ -174,16 +174,7 @@ def _native_extension() -> Extension:
     )
 
 
-def _public_api_package_dir() -> str:
-    lowercase_package = ROOT / "src" / "pysmf"
-    if lowercase_package.is_dir():
-        return "src/pysmf"
-    return "src/pySMF"
-
-
 setup(
     cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel},
     ext_modules=[_native_extension()],
-    package_dir={"pysmf": _public_api_package_dir(), "smf_parser": "src/smf_parser"},
-    packages=["pysmf", "smf_parser"],
 )
