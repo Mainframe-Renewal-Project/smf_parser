@@ -218,6 +218,11 @@ def _generate_record_parser_source(
         "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
         "unsigned long long data_type, unsigned long long section_offset, ",
         "unsigned long long section_length, unsigned long long section_count);",
+        "int append_self_defining_variable_sections(PyObject *dict, ",
+        "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
+        "unsigned long long section_offset, unsigned long long section_count, ",
+        "unsigned long long type_size, unsigned long long length_size, ",
+        "unsigned long long data_offset);",
         "int append_self_defining_section_directory(PyObject *dict, ",
         "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
         "unsigned long long directory, unsigned long long count);",
@@ -282,6 +287,7 @@ def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
                     "struct_name": struct_name,
                     "include": include_name,
                     "fields": fields,
+                    "section_structs": _record_section_structs(int(record_type), structs),
                 }
             )
             seen_record_types.add(int(record_type))
@@ -489,9 +495,93 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
                 ]
             )
     lines.extend(_self_defining_triplet_parser_lines(fields))
-    lines.extend(_section_directory_parser_lines(fields_by_name))
+    section_structs = cast(
+        dict[str, tuple[dict[str, object], ...]], record["section_structs"]
+    )
+    lines.extend(
+        _variable_section_parser_lines(
+            fields_by_name,
+            section_structs,
+        )
+    )
+    lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
     lines.extend(["    return result;", "}", ""])
     return lines
+
+
+def _record_section_structs(
+    record_type: int, structs: dict[str, str]
+) -> dict[str, tuple[dict[str, object], ...]]:
+    section_structs: dict[str, tuple[dict[str, object], ...]] = {}
+    for name in (f"smf{record_type}var", f"smf{record_type}vr2"):
+        body = structs.get(name)
+        if body is None:
+            continue
+        fields = _record_struct_fields(body)
+        if _variable_section_layout(fields) is not None:
+            section_structs[name] = fields
+    return section_structs
+
+
+def _variable_section_layout(
+    fields: tuple[dict[str, object], ...]
+) -> tuple[int, int, int] | None:
+    if len(fields) < 2:
+        return None
+    type_field = fields[0]
+    length_field = fields[1]
+    type_size = int(cast(int, type_field["size"]))
+    length_size = int(cast(int, length_field["size"]))
+    if type_size not in (1, 2) or length_size not in (1, 2):
+        return None
+    if not _field_name_contains(type_field, ("typ", "dtp", "tp")):
+        return None
+    if not _field_name_contains(length_field, ("len", "lng", "dln", "dl")):
+        return None
+    data_offset = int(cast(int, length_field["offset"])) + length_size
+    return type_size, length_size, data_offset
+
+
+def _variable_section_parser_lines(
+    fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]],
+) -> list[str]:
+    lines: list[str] = []
+    for offset_field, count_field in _section_directory_pairs(fields_by_name):
+        offset_field_name = str(offset_field["name"])
+        key = _section_directory_key(offset_field_name)
+        struct_name = _variable_section_struct_name(offset_field_name)
+        section_fields = section_structs.get(struct_name)
+        if section_fields is None:
+            continue
+        layout = _variable_section_layout(section_fields)
+        if layout is None:
+            continue
+        type_size, length_size, data_offset = layout
+        relocate_offset = int(cast(int, offset_field["offset"]))
+        relocate_count_offset = int(cast(int, count_field["offset"]))
+        lines.extend(
+            [
+                "    if (append_self_defining_variable_sections(",
+                f"        result, \"{key}\", data, view->len,",
+                f"        read_unsigned_be(data + {relocate_offset}, 2),",
+                "        read_unsigned_be(data + "
+                f"{relocate_count_offset}, 2),",
+                f"        {type_size}, {length_size}, {data_offset}) < 0) {{",
+                "        Py_DECREF(result);",
+                "        return NULL;",
+                "    }",
+            ]
+        )
+    return lines
+
+
+def _variable_section_struct_name(offset_field_name: str) -> str:
+    if offset_field_name.endswith("rl2"):
+        return f"{offset_field_name[:-3]}vr2"
+    if offset_field_name.endswith("rel"):
+        return f"{offset_field_name[:-3]}var"
+    return offset_field_name
 
 
 def _self_defining_triplet_parser_lines(
@@ -562,9 +652,14 @@ def _field_name_contains(field: dict[str, object], tokens: tuple[str, ...]) -> b
 
 def _section_directory_parser_lines(
     fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]] | None = None,
 ) -> list[str]:
     lines: list[str] = []
     for offset_field, count_field in _section_directory_pairs(fields_by_name):
+        if section_structs is not None:
+            struct_name = _variable_section_struct_name(str(offset_field["name"]))
+            if struct_name in section_structs:
+                continue
         key = _section_directory_key(str(offset_field["name"]))
         relocate_offset = int(cast(int, offset_field["offset"]))
         relocate_count_offset = int(cast(int, count_field["offset"]))

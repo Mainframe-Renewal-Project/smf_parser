@@ -65,6 +65,7 @@ class SetupGenerationTests(unittest.TestCase):
         native = native_source()
 
         self.assertIn("append_self_defining_triplet_sections", generated)
+        self.assertIn("append_self_defining_variable_sections", generated)
         self.assertIn("append_self_defining_section_directory", generated)
         self.assertIn("_self_defining_triplet_parser_lines", generated)
         self.assertIn("_self_defining_triplets", generated)
@@ -72,6 +73,7 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("extended_relocate_sections", generated)
         self.assertIn("read_unsigned_be(data +", generated)
         self.assertIn("int append_self_defining_triplet_sections", native)
+        self.assertIn("int append_self_defining_variable_sections", native)
         self.assertIn("int append_self_defining_section_directory", native)
         self.assertIn("section_offset = read_unsigned_be", native)
         self.assertNotIn("discover_self_defining_sections", generated)
@@ -92,6 +94,44 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("append_section(", triplet_parser)
         self.assertNotIn("PyList_New(0);", triplet_parser)
         self.assertIn("int append_self_defining_triplet_sections", generated)
+
+    def test_racf_relocate_sections_use_header_variable_blocks(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf81rel": {"name": "smf81rel", "offset": 128, "size": 2},
+            "smf81cnt": {"name": "smf81cnt", "offset": 130, "size": 2},
+            "smf80rl2": {"name": "smf80rl2", "offset": 92, "size": 2},
+            "smf80ct2": {"name": "smf80ct2", "offset": 94, "size": 2},
+        }
+        section_structs = {
+            "smf81var": (
+                {"name": "smf81dtp", "offset": 0, "size": 1},
+                {"name": "smf81dln", "offset": 1, "size": 1},
+                {"name": "smf81dta", "offset": 2, "size": 255},
+            ),
+            "smf80vr2": (
+                {"name": "smf80tp2", "offset": 0, "size": 2},
+                {"name": "smf80dl2", "offset": 2, "size": 2},
+            ),
+        }
+
+        lines = "\n".join(
+            module._variable_section_parser_lines(fields_by_name, section_structs)
+        )
+
+        self.assertIn("append_self_defining_variable_sections", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+        self.assertIn("read_unsigned_be(data + 128, 2)", lines)
+        self.assertIn("read_unsigned_be(data + 130, 2)", lines)
+        self.assertIn("1, 1, 2", lines)
+        self.assertIn("2, 2, 4", lines)
+
+        directory_lines = "\n".join(
+            module._section_directory_parser_lines(fields_by_name, section_structs)
+        )
+
+        self.assertNotIn("append_self_defining_section_directory", directory_lines)
 
     def test_native_section_directory_can_use_header_anchor_without_count(
         self,
