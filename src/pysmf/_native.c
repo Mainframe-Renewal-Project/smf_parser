@@ -21,6 +21,156 @@
 
 PyObject *generated_parse_record(PyObject *self, PyObject *args);
 
+int set_long(PyObject *dict, const char *key, long long value) {
+    PyObject *object = PyLong_FromLongLong(value);
+    int result;
+    if (object == NULL) {
+        return -1;
+    }
+    result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
+}
+
+int set_bytes(PyObject *dict, const char *key, const unsigned char *data, Py_ssize_t length) {
+    PyObject *object = PyBytes_FromStringAndSize((const char *)data, length);
+    int result;
+    if (object == NULL) {
+        return -1;
+    }
+    result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
+}
+
+unsigned long long read_unsigned_be(const unsigned char *data, Py_ssize_t length) {
+    unsigned long long value = 0;
+    Py_ssize_t index;
+    for (index = 0; index < length; index++) {
+        value = (value << 8) | data[index];
+    }
+    return value;
+}
+
+long long read_signed_be(const unsigned char *data, Py_ssize_t length) {
+    unsigned long long value = read_unsigned_be(data, length);
+    unsigned long long sign_bit;
+    if (length <= 0 || length >= (Py_ssize_t)sizeof(unsigned long long)) {
+        return (long long)value;
+    }
+    sign_bit = 1ULL << ((length * 8) - 1);
+    if (value & sign_bit) {
+        value |= (~0ULL) << (length * 8);
+    }
+    return (long long)value;
+}
+
+int validate_record_type(const unsigned char *data, int expected) {
+    return data[5] == (unsigned char)expected;
+}
+
+static int append_section(PyObject *list, unsigned long long data_type, const unsigned char *data, Py_ssize_t length, Py_ssize_t offset) {
+    PyObject *section = PyDict_New();
+    int result;
+    if (section == NULL) {
+        return -1;
+    }
+    if (set_long(section, "data_type", (long long)data_type) < 0) {
+        Py_DECREF(section);
+        return -1;
+    }
+    if (set_long(section, "offset", (long long)offset) < 0) {
+        Py_DECREF(section);
+        return -1;
+    }
+    if (set_bytes(section, "data", data, length) < 0) {
+        Py_DECREF(section);
+        return -1;
+    }
+    result = PyList_Append(list, section);
+    Py_DECREF(section);
+    return result;
+}
+
+static PyObject *section_list(PyObject *dict, const char *key) {
+    PyObject *list = PyDict_GetItemString(dict, key);
+    if (list != NULL) {
+        if (!PyList_Check(list)) {
+            return NULL;
+        }
+        return list;
+    }
+    list = PyList_New(0);
+    if (list == NULL) {
+        return NULL;
+    }
+    if (PyDict_SetItemString(dict, key, list) < 0) {
+        Py_DECREF(list);
+        return NULL;
+    }
+    Py_DECREF(list);
+    return PyDict_GetItemString(dict, key);
+}
+
+int append_self_defining_triplet_sections(PyObject *dict, const char *key, const unsigned char *data, Py_ssize_t record_length, unsigned long long data_type, unsigned long long section_offset, unsigned long long section_length, unsigned long long section_count) {
+    PyObject *list;
+    unsigned long long occurrence;
+    if (section_offset == 0 || section_length == 0 || section_count == 0) {
+        return 0;
+    }
+    if (section_length > 4096 || section_count > 4096) {
+        return 0;
+    }
+    if (section_offset > (unsigned long long)record_length) {
+        return 0;
+    }
+    if (section_count > ((unsigned long long)record_length - section_offset) / section_length) {
+        return 0;
+    }
+    list = section_list(dict, key);
+    if (list == NULL) {
+        return -1;
+    }
+    for (occurrence = 0; occurrence < section_count; occurrence++) {
+        Py_ssize_t offset = (Py_ssize_t)(section_offset + (occurrence * section_length));
+        if (append_section(list, data_type, data + offset, (Py_ssize_t)section_length, offset) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int append_self_defining_section_directory(PyObject *dict, const char *key, const unsigned char *data, Py_ssize_t record_length, unsigned long long directory, unsigned long long count) {
+    unsigned long long index;
+    if (directory == 0 || count == 0) {
+        return 0;
+    }
+    if (directory > (unsigned long long)record_length) {
+        return 0;
+    }
+    if (count > ((unsigned long long)record_length - directory) / 8) {
+        return 0;
+    }
+    for (index = 0; index < count; index++) {
+        Py_ssize_t entry_offset = (Py_ssize_t)(directory + (index * 8));
+        unsigned long long section_offset = read_unsigned_be(data + entry_offset, 4);
+        unsigned long long section_length = read_unsigned_be(data + entry_offset + 4, 2);
+        unsigned long long section_count = read_unsigned_be(data + entry_offset + 6, 2);
+        if (append_self_defining_triplet_sections(
+                dict,
+                key,
+                data,
+                record_length,
+                (unsigned long long)entry_offset,
+                section_offset,
+                section_length,
+                section_count) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static uint16_t read_u16_be(const unsigned char *data) {
     return (uint16_t)(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
 }
