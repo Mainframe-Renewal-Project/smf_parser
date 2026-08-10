@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from importlib import import_module
 from os import environ
 from pathlib import Path
+from types import MappingProxyType
 
 from .errors import HeaderCatalogError
 
@@ -26,6 +28,25 @@ class HeaderCatalog:
 
     include_dir: Path
     headers: tuple[HeaderDefinition, ...]
+    _headers_by_name: Mapping[str, HeaderDefinition] = field(init=False, repr=False, compare=False)
+    _headers_by_record_type: Mapping[int, tuple[HeaderDefinition, ...]] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        headers_by_name: dict[str, HeaderDefinition] = {}
+        headers_by_record_type: dict[int, list[HeaderDefinition]] = {}
+        for header in self.headers:
+            for name in _normalized_header_names(header.name, header.path.name):
+                headers_by_name.setdefault(name, header)
+            for record_type in header.record_types:
+                headers_by_record_type.setdefault(record_type, []).append(header)
+        object.__setattr__(self, "_headers_by_name", MappingProxyType(headers_by_name))
+        object.__setattr__(
+            self,
+            "_headers_by_record_type",
+            MappingProxyType(
+                {record_type: tuple(headers) for record_type, headers in headers_by_record_type.items()}
+            ),
+        )
 
     @classmethod
     def discover(cls, include_dir: str | Path | None = None) -> HeaderCatalog:
@@ -40,14 +61,13 @@ class HeaderCatalog:
         return cls(include_dir=root, headers=definitions)
 
     def by_name(self, name: str) -> HeaderDefinition | None:
-        normalized = _normalized_header_names(name)
-        for header in self.headers:
-            if normalized & _normalized_header_names(header.name, header.path.name):
+        for normalized in _normalized_header_names(name):
+            if header := self._headers_by_name.get(normalized):
                 return header
         return None
 
     def for_record_type(self, record_type: int) -> tuple[HeaderDefinition, ...]:
-        return tuple(header for header in self.headers if record_type in header.record_types)
+        return self._headers_by_record_type.get(record_type, ())
 
 
 def default_include_dir() -> Path:

@@ -7,6 +7,7 @@ from codecs import lookup
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cache
 from importlib import import_module
 from io import BytesIO
 from os import PathLike
@@ -126,6 +127,7 @@ def decode_ebcdic(value: bytes, *, encoding: str = "cp1047") -> str:
     return value.rstrip(b"\x40\x00").decode(_available_ebcdic_encoding(encoding), errors="replace")
 
 
+@cache
 def _available_ebcdic_encoding(encoding: str) -> str:
     try:
         lookup(encoding)
