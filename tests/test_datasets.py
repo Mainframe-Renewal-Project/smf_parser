@@ -385,8 +385,8 @@ class DatasetReaderTests(unittest.TestCase):
         record = standard_record(30, body=b"payload" * 100)
         fake_native = native_reader(
             [
-                vbs_block((0x40, record[:128])),
-                vbs_block((0x80, record[128:])),
+                vbs_block((0x01, record[:128])),
+                vbs_block((0x02, record[128:])),
             ]
         )
 
@@ -429,9 +429,9 @@ class DatasetReaderTests(unittest.TestCase):
         record = standard_record(30, body=b"payload" * 100)
         fake_native = native_reader(
             [
-                vbs_segment(0x40, record[:128]),
-                vbs_segment(0xC0, record[128:256]),
-                vbs_segment(0x80, record[256:]),
+                vbs_segment(0x01, record[:128]),
+                vbs_segment(0x03, record[128:256]),
+                vbs_segment(0x02, record[256:]),
             ]
         )
 

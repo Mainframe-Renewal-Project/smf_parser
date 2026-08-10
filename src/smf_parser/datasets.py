@@ -31,9 +31,9 @@ _MAX_SMF_RECORD_LENGTH = 32756
 _MAX_SMF_TIME_HUNDREDTHS = 24 * 60 * 60 * 100
 _MAX_PLAUSIBLE_SUBTYPE = 4096
 _VBS_SEGMENT_COMPLETE = 0x00
-_VBS_SEGMENT_FIRST = 0x40
-_VBS_SEGMENT_LAST = 0x80
-_VBS_SEGMENT_MIDDLE = 0xC0
+_VBS_SEGMENT_FIRST = 0x01
+_VBS_SEGMENT_LAST = 0x02
+_VBS_SEGMENT_MIDDLE = 0x03
 
 
 def read_dataset(
@@ -301,13 +301,8 @@ def _vbs_block_segments(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
         segment_length = int.from_bytes(chunk[offset : offset + 2], "big")
         if segment_length < 4 or offset + segment_length > block_length:
             return None
-        segment_control = chunk[offset + 2] & 0xC0
-        if segment_control not in {
-            _VBS_SEGMENT_COMPLETE,
-            _VBS_SEGMENT_FIRST,
-            _VBS_SEGMENT_LAST,
-            _VBS_SEGMENT_MIDDLE,
-        }:
+        segment_control = _vbs_segment_control(chunk[offset + 2])
+        if segment_control is None:
             return None
         segment_data = bytes(chunk[offset + 4 : offset + segment_length])
         if not _vbs_segment_data_is_plausible(segment_control, segment_data):
@@ -323,18 +318,33 @@ def _vbs_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
     segment_length = int.from_bytes(chunk[0:2], "big")
     if segment_length != len(chunk):
         return None
-    segment_control = chunk[2] & 0xC0
-    if segment_control not in {
-        _VBS_SEGMENT_COMPLETE,
-        _VBS_SEGMENT_FIRST,
-        _VBS_SEGMENT_LAST,
-        _VBS_SEGMENT_MIDDLE,
-    }:
+    segment_control = _vbs_segment_control(chunk[2])
+    if segment_control is None:
         return None
     segment_data = bytes(chunk[4:])
     if not _vbs_segment_data_is_plausible(segment_control, segment_data):
         return None
     return ((segment_control, segment_data),)
+
+
+def _vbs_segment_control(descriptor_byte: int) -> int | None:
+    high_bits = descriptor_byte & 0xC0
+    if high_bits:
+        return {
+            0x40: _VBS_SEGMENT_FIRST,
+            0x80: _VBS_SEGMENT_LAST,
+            0xC0: _VBS_SEGMENT_MIDDLE,
+        }.get(high_bits)
+
+    low_bits = descriptor_byte & 0x03
+    if low_bits in {
+        _VBS_SEGMENT_COMPLETE,
+        _VBS_SEGMENT_FIRST,
+        _VBS_SEGMENT_LAST,
+        _VBS_SEGMENT_MIDDLE,
+    }:
+        return low_bits
+    return None
 
 
 def _vbs_segment_data_is_plausible(segment_control: int, segment_data: bytes) -> bool:
