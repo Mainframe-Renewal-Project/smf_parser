@@ -529,6 +529,30 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual([record.record_type for record in parsed], [80])
         self.assertEqual(parsed[0].data, expected)
 
+    def test_read_dataset_accepts_short_first_native_smf_record_segment(
+        self,
+    ) -> None:
+        record = standard_record(80, body=b"payload" * 1000)
+        expected = record[:2] + b"\x00\x01" + record[4:]
+        fake_native = native_reader(
+            [
+                smf_record_segment(record, 0x0001, 0, 14),
+                smf_record_segment(record, 0x0003, 14, 1024),
+                smf_record_segment(record, 0x0002, 1024, len(record)),
+            ]
+        )
+
+        with patch(
+            "pysmf.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(80))
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [80])
+        self.assertEqual(parsed[0].data, expected)
+
     def test_read_dataset_discards_wrong_length_native_smf_record_segments(
         self,
     ) -> None:

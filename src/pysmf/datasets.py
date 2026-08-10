@@ -309,7 +309,7 @@ def _declared_smf_record_length(data: bytes) -> int:
 
 
 def _native_smf_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
-    if len(chunk) < _MIN_SMF_RECORD_LENGTH:
+    if len(chunk) < 4:
         return None
     record_length = int.from_bytes(chunk[0:2], "big")
     if record_length & 0x8000:
