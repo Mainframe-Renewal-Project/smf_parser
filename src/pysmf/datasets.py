@@ -225,7 +225,7 @@ def _read_native_vbs_dataset_records(
     record_types: frozenset[int] | None,
 ) -> Iterable[bytes]:
     try:
-        native = import_module("smf_parser._native")
+        native = import_module("pysmf._native")
     except ImportError as error:
         raise _unsupported_vbs_dataset_error(dataset_name, entries) from error
 

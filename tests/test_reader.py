@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from smf_parser import (
+from pysmf import (
     HeaderCatalog,
     HeaderCatalogError,
     HeaderDefinition,
@@ -108,7 +108,7 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.header_length, 24)
 
     def test_parse_standard_header_decodes_packed_time(self) -> None:
-        from smf_parser import reader
+        from pysmf import reader
 
         record = bytearray(standard_record(30, subtype=5))
         record[6:10] = b"\x01\x26\x21\x9f"
@@ -120,7 +120,7 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(header.system_id_text, "SYS1")
 
     def test_parse_date_first_header(self) -> None:
-        from smf_parser import reader
+        from pysmf import reader
 
         length = 20
         record = struct.pack(
@@ -156,7 +156,7 @@ class ReaderTests(unittest.TestCase):
         self.assertFalse(header.has_subtype)
 
     def test_parse_header_uses_native_parser_when_available(self) -> None:
-        from smf_parser import reader
+        from pysmf import reader
 
         native = SimpleNamespace(
             parse_header=lambda data: (
@@ -240,7 +240,7 @@ class HeaderCatalogTests(unittest.TestCase):
             generic=False,
         )
         with patch(
-            "smf_parser.headers._compiled_headers",
+            "pysmf.headers._compiled_headers",
             return_value=(include_dir, (definition,)),
         ):
             catalog = HeaderCatalog.discover(include_dir)

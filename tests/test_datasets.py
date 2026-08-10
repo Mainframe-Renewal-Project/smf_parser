@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from smf_parser import (
+from pysmf import (
     TruncatedSMFRecordError,
     ZOAUMissingError,
     ZOAUUnsupportedDatasetError,
@@ -243,7 +243,7 @@ class DatasetReaderTests(unittest.TestCase):
 
         fake_datasets = SimpleNamespace(read_as_bytes=read_as_bytes)
 
-        with patch("smf_parser.datasets.import_module", return_value=fake_datasets):
+        with patch("pysmf.datasets.import_module", return_value=fake_datasets):
             parsed = list(
                 read_dataset(
                     "USER.SMF.UNLOAD",
@@ -261,7 +261,7 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_rejects_zoau_vbs_datasets(self) -> None:
         with (
             patch(
-                "smf_parser.datasets.import_module",
+                "pysmf.datasets.import_module",
                 side_effect=vbs_import_module_side_effect(),
             ),
             self.assertRaises(ZOAUUnsupportedDatasetError),
@@ -287,7 +287,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(
                 fake_native,
                 generation_count=3,
@@ -322,7 +322,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -344,7 +344,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([standard_record(2) + standard_record(30)])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -369,7 +369,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -392,7 +392,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -413,7 +413,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -437,7 +437,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -460,7 +460,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -475,7 +475,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([record[:128], record[128:256], record[256:]])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -504,7 +504,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([incomplete, complete])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -521,7 +521,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([incomplete, complete])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -536,7 +536,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([record + trailing_payload])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -553,7 +553,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([unsupported_record, supported_record])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -572,7 +572,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([implausible_record + supported_record])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -596,7 +596,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([record])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -623,7 +623,7 @@ class DatasetReaderTests(unittest.TestCase):
         fake_native = native_reader([false_record, supported_record])
 
         with patch(
-            "smf_parser.datasets.import_module",
+            "pysmf.datasets.import_module",
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
@@ -637,7 +637,7 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
             patch(
-                "smf_parser.datasets.import_module", side_effect=ImportError("no zoau")
+                "pysmf.datasets.import_module", side_effect=ImportError("no zoau")
             ),
             self.assertRaises(ZOAUMissingError),
         ):

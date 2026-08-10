@@ -1,2 +1,2 @@
-include src/smf_parser/_native.c
+include src/pysmf/_native.c
 prune tests

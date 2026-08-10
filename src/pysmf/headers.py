@@ -61,7 +61,7 @@ class HeaderCatalog:
         compiled_include_dir, definitions = _compiled_headers()
         if root != compiled_include_dir:
             raise HeaderCatalogError(
-                "smf_parser was built against z/OS C headers in "
+                "pysmf was built against z/OS C headers in "
                 f"{compiled_include_dir}, not {root}"
             )
         if not definitions:
@@ -81,7 +81,7 @@ class HeaderCatalog:
 def default_include_dir() -> Path:
     """Return the default z/OS C header include directory."""
 
-    configured = environ.get("SMF_PARSER_ZOS_INCLUDE")
+    configured = environ.get("PYSMF_ZOS_INCLUDE")
     if configured:
         return Path(configured)
     return Path("/usr/include/zos")
@@ -101,8 +101,8 @@ def _compiled_headers() -> tuple[Path, tuple[HeaderDefinition, ...]]:
         manifest = import_module("._compiled_headers", package=__package__)
     except ImportError as error:
         raise HeaderCatalogError(
-            "smf_parser was not built with compiled z/OS C headers; rebuild it on z/OS "
-            "with SMF_PARSER_ZOS_INCLUDE pointing at the header directory"
+            "pysmf was not built with compiled z/OS C headers; rebuild it on z/OS "
+            "with PYSMF_ZOS_INCLUDE pointing at the header directory"
         ) from error
 
     include_dir = Path(manifest.INCLUDE_DIR)

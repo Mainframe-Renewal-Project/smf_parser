@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from smf_parser._header_registry import HEADER_TARGETS
+from pysmf._header_registry import HEADER_TARGETS
 
 IBM_SMF_HEADER_NAMES = {
     "BPXYSMFR",

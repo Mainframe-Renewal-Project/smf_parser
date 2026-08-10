@@ -29,7 +29,7 @@ class BuildPy(build_py_base):
     def _write_compiled_header_manifest(
         self, compiled_headers: list[dict[str, object]]
     ) -> None:
-        package_dir = Path(self.build_lib, "smf_parser")
+        package_dir = Path(self.build_lib, "pysmf")
         package_dir.mkdir(parents=True, exist_ok=True)
         manifest = package_dir / "_compiled_headers.py"
         manifest.write_text(
@@ -56,7 +56,7 @@ class BdistWheel(bdist_wheel_base):
 def _include_dir() -> Path:
     from os import environ
 
-    configured = environ.get("SMF_PARSER_ZOS_INCLUDE")
+    configured = environ.get("PYSMF_ZOS_INCLUDE")
     if configured:
         return Path(configured)
     return DEFAULT_INCLUDE_DIR
@@ -67,7 +67,7 @@ def _include_dirs() -> tuple[Path, ...]:
 
     include_dir = _include_dir()
     include_dirs = [include_dir]
-    configured_ibm_include = environ.get("SMF_PARSER_IBM_INCLUDE")
+    configured_ibm_include = environ.get("PYSMF_IBM_INCLUDE")
     ibm_include_dir = (
         Path(configured_ibm_include)
         if configured_ibm_include
@@ -156,8 +156,8 @@ def _header_name_candidates(target: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _header_targets() -> tuple[dict[str, Any], ...]:
-    registry_path = ROOT / "src" / "smf_parser" / "_header_registry.py"
-    spec = spec_from_file_location("_smf_parser_header_registry", registry_path)
+    registry_path = ROOT / "src" / "pysmf" / "_header_registry.py"
+    spec = spec_from_file_location("_pysmf_header_registry", registry_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load header registry from {registry_path}")
     module = module_from_spec(spec)
@@ -167,8 +167,8 @@ def _header_targets() -> tuple[dict[str, Any], ...]:
 
 def _native_extension() -> Extension:
     return Extension(
-        "smf_parser._native",
-        sources=["src/smf_parser/_native.c"],
+        "pysmf._native",
+        sources=["src/pysmf/_native.c"],
         include_dirs=[str(path) for path in _include_dirs()],
         extra_compile_args=list(HEADER_COMPILE_FLAGS),
     )

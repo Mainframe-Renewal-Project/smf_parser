@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 class SMFError(Exception):
-    """Base exception for smf_parser."""
+    """Base exception for pysmf."""
 
 
 class SMFParseError(SMFError):

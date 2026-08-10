@@ -20,10 +20,7 @@ fallback_version = "0.0.0"
 [tool.setuptools]
 include-package-data = false
 package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["pysmf", "smf_parser"]
+packages = ["pysmf"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "N"]

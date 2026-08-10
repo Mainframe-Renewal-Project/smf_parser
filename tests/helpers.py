@@ -4,7 +4,7 @@ import struct
 from pathlib import Path
 from types import SimpleNamespace
 
-from smf_parser import HeaderCatalog, HeaderDefinition
+from pysmf import HeaderCatalog, HeaderDefinition
 
 try:
     "".encode("cp1047")
@@ -110,7 +110,7 @@ def vbs_import_module_side_effect(
             return fake_datasets
         if name == "zoautil_py.gdgs":
             return fake_gdgs
-        if name == "smf_parser._native" and native is not None:
+        if name == "pysmf._native" and native is not None:
             return native
         raise ImportError(name)
 

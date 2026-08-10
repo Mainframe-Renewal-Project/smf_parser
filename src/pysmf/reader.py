@@ -18,7 +18,7 @@ from .errors import HeaderCatalogError, SMFParseError, TruncatedSMFRecordError
 from .headers import HeaderCatalog, HeaderDefinition
 
 try:
-    _native: Any | None = import_module("smf_parser._native")
+    _native: Any | None = import_module("pysmf._native")
 except ImportError:
     _native = None
 
