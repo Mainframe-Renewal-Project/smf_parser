@@ -57,6 +57,10 @@ def vbs_segment(control: int, data: bytes) -> bytes:
     return struct.pack(">HBB", len(data) + 4, control, 0) + data
 
 
+def vbs_segment_word(control: int, data: bytes) -> bytes:
+    return struct.pack(">HH", len(data) + 4, control) + data
+
+
 def header_catalog(*record_types: int) -> HeaderCatalog:
     include_dir = Path("/compiled/zos")
     return HeaderCatalog(

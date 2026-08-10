@@ -301,7 +301,7 @@ def _vbs_block_segments(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
         segment_length = int.from_bytes(chunk[offset : offset + 2], "big")
         if segment_length < 4 or offset + segment_length > block_length:
             return None
-        segment_control = _vbs_segment_control(chunk[offset + 2])
+        segment_control = _vbs_segment_control(chunk[offset + 2 : offset + 4])
         if segment_control is None:
             return None
         segment_data = bytes(chunk[offset + 4 : offset + segment_length])
@@ -318,7 +318,7 @@ def _vbs_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
     segment_length = int.from_bytes(chunk[0:2], "big")
     if segment_length != len(chunk):
         return None
-    segment_control = _vbs_segment_control(chunk[2])
+    segment_control = _vbs_segment_control(chunk[2:4])
     if segment_control is None:
         return None
     segment_data = bytes(chunk[4:])
@@ -327,23 +327,33 @@ def _vbs_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
     return ((segment_control, segment_data),)
 
 
-def _vbs_segment_control(descriptor_byte: int) -> int | None:
-    high_bits = descriptor_byte & 0xC0
+def _vbs_segment_control(descriptor: bytes) -> int | None:
+    descriptor_word = int.from_bytes(descriptor, "big")
+    high_bits = descriptor_word & 0xC000
     if high_bits:
+        return {
+            0x4000: _VBS_SEGMENT_FIRST,
+            0x8000: _VBS_SEGMENT_LAST,
+            0xC000: _VBS_SEGMENT_MIDDLE,
+        }.get(high_bits)
+
+    high_byte_bits = descriptor[0] & 0xC0
+    if high_byte_bits:
         return {
             0x40: _VBS_SEGMENT_FIRST,
             0x80: _VBS_SEGMENT_LAST,
             0xC0: _VBS_SEGMENT_MIDDLE,
-        }.get(high_bits)
+        }.get(high_byte_bits)
 
-    low_bits = descriptor_byte & 0x03
-    if low_bits in {
-        _VBS_SEGMENT_COMPLETE,
-        _VBS_SEGMENT_FIRST,
-        _VBS_SEGMENT_LAST,
-        _VBS_SEGMENT_MIDDLE,
-    }:
+    byte_low_bits = descriptor[0] & 0x03
+    if byte_low_bits:
+        return byte_low_bits
+
+    low_bits = descriptor_word & 0x03
+    if low_bits:
         return low_bits
+    if descriptor_word == 0:
+        return _VBS_SEGMENT_COMPLETE
     return None
 
 

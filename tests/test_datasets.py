@@ -19,6 +19,7 @@ from tests.helpers import (
     standard_record,
     vbs_block,
     vbs_segment,
+    vbs_segment_word,
     vbs_import_module_side_effect,
 )
 
@@ -432,6 +433,29 @@ class DatasetReaderTests(unittest.TestCase):
                 vbs_segment(0x01, record[:128]),
                 vbs_segment(0x03, record[128:256]),
                 vbs_segment(0x02, record[256:]),
+            ]
+        )
+
+        with patch(
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [30])
+        self.assertEqual(parsed[0].data, record)
+
+    def test_read_dataset_reconstructs_spanned_record_from_descriptor_words(
+        self,
+    ) -> None:
+        record = standard_record(30, body=b"payload" * 100)
+        fake_native = native_reader(
+            [
+                vbs_segment_word(0x01, record[:128]),
+                vbs_segment_word(0x03, record[128:256]),
+                vbs_segment_word(0x02, record[256:]),
             ]
         )
 
