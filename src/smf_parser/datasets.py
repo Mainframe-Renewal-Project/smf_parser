@@ -30,6 +30,10 @@ _MIN_SMF_RECORD_LENGTH = 18
 _MAX_SMF_RECORD_LENGTH = 32756
 _MAX_SMF_TIME_HUNDREDTHS = 24 * 60 * 60 * 100
 _MAX_PLAUSIBLE_SUBTYPE = 4096
+_VBS_SEGMENT_COMPLETE = 0x00
+_VBS_SEGMENT_FIRST = 0x40
+_VBS_SEGMENT_LAST = 0x80
+_VBS_SEGMENT_MIDDLE = 0xC0
 
 
 def read_dataset(
@@ -236,7 +240,7 @@ def _read_native_vbs_smf_records(
     record_types: frozenset[int] | None,
 ) -> Iterator[SMFRecord]:
     yield from _read_smf_dataset_records(
-        records,
+        _iter_native_vbs_logical_records(records),
         record_format="smf",
         skip_short_records=False,
         header_catalog=_require_header_catalog(header_catalog),
@@ -246,6 +250,59 @@ def _read_native_vbs_smf_records(
         skip_invalid_records=True,
         trusted_record_boundaries=True,
     )
+
+
+def _iter_native_vbs_logical_records(chunks: Iterable[bytes]) -> Iterator[bytes]:
+    spanned_record = bytearray()
+    for chunk in chunks:
+        segments = _vbs_block_segments(chunk)
+        if segments is None:
+            spanned_record.clear()
+            yield chunk
+            continue
+
+        for segment_control, segment_data in segments:
+            if segment_control == _VBS_SEGMENT_COMPLETE:
+                spanned_record.clear()
+                yield segment_data
+            elif segment_control == _VBS_SEGMENT_FIRST:
+                spanned_record = bytearray(segment_data)
+            elif segment_control == _VBS_SEGMENT_MIDDLE:
+                if spanned_record:
+                    spanned_record.extend(segment_data)
+            elif segment_control == _VBS_SEGMENT_LAST:
+                if spanned_record:
+                    spanned_record.extend(segment_data)
+                    yield bytes(spanned_record)
+                    spanned_record.clear()
+
+
+def _vbs_block_segments(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
+    if len(chunk) < 8:
+        return None
+    block_length = int.from_bytes(chunk[0:2], "big")
+    if not 8 <= block_length <= len(chunk):
+        return None
+
+    offset = 4
+    segments: list[tuple[int, bytes]] = []
+    while offset < block_length:
+        if offset + 4 > block_length:
+            return None
+        segment_length = int.from_bytes(chunk[offset : offset + 2], "big")
+        if segment_length < 4 or offset + segment_length > block_length:
+            return None
+        segment_control = chunk[offset + 2] & 0xC0
+        if segment_control not in {
+            _VBS_SEGMENT_COMPLETE,
+            _VBS_SEGMENT_FIRST,
+            _VBS_SEGMENT_LAST,
+            _VBS_SEGMENT_MIDDLE,
+        }:
+            return None
+        segments.append((segment_control, bytes(chunk[offset + 4 : offset + segment_length])))
+        offset += segment_length
+    return tuple(segments)
 
 
 def _resolve_relative_gdg_name(dataset_name: str, entries) -> str:
