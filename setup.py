@@ -6,7 +6,7 @@ import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 from setuptools import Extension, setup
 from setuptools._distutils.ccompiler import CompileError, new_compiler
@@ -254,6 +254,95 @@ def _generate_record_parser_source(
         "    return data[5] == (unsigned char)expected;",
         "}",
         "",
+        "static int append_section(PyObject *list, unsigned long long data_type, ",
+        "const unsigned char *data, Py_ssize_t length, Py_ssize_t offset) {",
+        "    PyObject *section = PyDict_New();",
+        "    int result;",
+        "    if (section == NULL) { return -1; }",
+        "    if (set_long(section, \"data_type\", (long long)data_type) < 0) {",
+        "        Py_DECREF(section);",
+        "        return -1;",
+        "    }",
+        "    if (set_long(section, \"offset\", (long long)offset) < 0) {",
+        "        Py_DECREF(section);",
+        "        return -1;",
+        "    }",
+        "    if (set_bytes(section, \"data\", data, length) < 0) {",
+        "        Py_DECREF(section);",
+        "        return -1;",
+        "    }",
+        "    result = PyList_Append(list, section);",
+        "    Py_DECREF(section);",
+        "    return result;",
+        "}",
+        "",
+        "static int set_smf80_relocate_sections(PyObject *dict, ",
+        "const unsigned char *data, Py_ssize_t record_length, ",
+        "unsigned long long start, unsigned long long count) {",
+        "    PyObject *list;",
+        "    unsigned long long index;",
+        "    Py_ssize_t offset = (Py_ssize_t)start;",
+        "    if (start == 0 || count == 0) { return 0; }",
+        "    if (start > (unsigned long long)record_length) { return 0; }",
+        "    list = PyList_New(0);",
+        "    if (list == NULL) { return -1; }",
+        "    for (index = 0; index < count; index++) {",
+        "        unsigned long long data_type;",
+        "        unsigned long long length;",
+        "        if (offset + 2 > record_length) { break; }",
+        "        data_type = data[offset];",
+        "        length = data[offset + 1];",
+        "        offset += 2;",
+        "        if (offset + (Py_ssize_t)length > record_length) { break; }",
+        "        if (append_section(list, data_type, data + offset, ",
+        "(Py_ssize_t)length, offset - 2) < 0) {",
+        "            Py_DECREF(list);",
+        "            return -1;",
+        "        }",
+        "        offset += (Py_ssize_t)length;",
+        "    }",
+        "    if (PyDict_SetItemString(dict, \"relocate_sections\", list) < 0) {",
+        "        Py_DECREF(list);",
+        "        return -1;",
+        "    }",
+        "    Py_DECREF(list);",
+        "    return 0;",
+        "}",
+        "",
+        "static int set_smf80_extended_relocate_sections(PyObject *dict, ",
+        "const unsigned char *data, Py_ssize_t record_length, ",
+        "unsigned long long start, unsigned long long count) {",
+        "    PyObject *list;",
+        "    unsigned long long index;",
+        "    Py_ssize_t offset = (Py_ssize_t)start;",
+        "    if (start == 0 || count == 0) { return 0; }",
+        "    if (start > (unsigned long long)record_length) { return 0; }",
+        "    list = PyList_New(0);",
+        "    if (list == NULL) { return -1; }",
+        "    for (index = 0; index < count; index++) {",
+        "        unsigned long long data_type;",
+        "        unsigned long long length;",
+        "        if (offset + 4 > record_length) { break; }",
+        "        data_type = read_unsigned_be(data + offset, 2);",
+        "        length = read_unsigned_be(data + offset + 2, 2);",
+        "        offset += 4;",
+        "        if (offset + (Py_ssize_t)length > record_length) { break; }",
+        "        if (append_section(list, data_type, data + offset, ",
+        "(Py_ssize_t)length, offset - 4) < 0) {",
+        "            Py_DECREF(list);",
+        "            return -1;",
+        "        }",
+        "        offset += (Py_ssize_t)length;",
+        "    }",
+        "    if (PyDict_SetItemString(dict, ",
+        "\"extended_relocate_sections\", list) < 0) {",
+        "        Py_DECREF(list);",
+        "        return -1;",
+        "    }",
+        "    Py_DECREF(list);",
+        "    return 0;",
+        "}",
+        "",
     ]
 
     for record in records:
@@ -431,9 +520,12 @@ def _c_field_is_signed(c_type: str) -> bool:
 
 def _record_parser_function(record: dict[str, object]) -> list[str]:
     struct_name = str(record["struct_name"])
-    record_type = int(record["record_type"])
+    record_type = int(cast(int, record["record_type"]))
+    fields = cast(tuple[dict[str, object], ...], record["fields"])
+    fields_by_name = {str(field["name"]): field for field in fields}
     minimum_size = max(
-        int(field["offset"]) + int(field["size"]) for field in record["fields"]
+        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
+        for field in fields
     )
     lines = [
         f"static PyObject *parse_{struct_name}(Py_buffer *view) {{",
@@ -453,11 +545,11 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         "    result = PyDict_New();",
         "    if (result == NULL) { return NULL; }",
     ]
-    for field in record["fields"]:
+    for field in fields:
         field_name = str(field["name"])
-        offset = int(field["offset"])
-        size = int(field["size"])
-        if int(field["array"]):
+        offset = int(cast(int, field["offset"]))
+        size = int(cast(int, field["size"]))
+        if int(cast(int, field["array"])):
             lines.extend(
                 [
                     f"    if (set_bytes(result, \"{field_name}\", "
@@ -478,7 +570,47 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
                     "    }",
                 ]
             )
+    if record_type == 80:
+        lines.extend(_smf80_section_parser_lines(fields_by_name))
     lines.extend(["    return result;", "}", ""])
+    return lines
+
+
+def _smf80_section_parser_lines(
+    fields_by_name: dict[str, dict[str, object]],
+) -> list[str]:
+    lines: list[str] = []
+    if {"smf80rel", "smf80cnt"}.issubset(fields_by_name):
+        relocate_offset = int(cast(int, fields_by_name["smf80rel"]["offset"]))
+        relocate_count_offset = int(
+            cast(int, fields_by_name["smf80cnt"]["offset"])
+        )
+        lines.extend(
+            [
+                "    if (set_smf80_relocate_sections(result, data, view->len,",
+                f"        read_unsigned_be(data + {relocate_offset}, 2),",
+                f"        read_unsigned_be(data + {relocate_count_offset}, 2)) < 0) {{",
+                "        Py_DECREF(result);",
+                "        return NULL;",
+                "    }",
+            ]
+        )
+    if {"smf80rl2", "smf80ct2"}.issubset(fields_by_name):
+        relocate_offset = int(cast(int, fields_by_name["smf80rl2"]["offset"]))
+        relocate_count_offset = int(
+            cast(int, fields_by_name["smf80ct2"]["offset"])
+        )
+        lines.extend(
+            [
+                "    if (set_smf80_extended_relocate_sections(",
+                "        result, data, view->len,",
+                f"        read_unsigned_be(data + {relocate_offset}, 2),",
+                f"        read_unsigned_be(data + {relocate_count_offset}, 2)) < 0) {{",
+                "        Py_DECREF(result);",
+                "        return NULL;",
+                "    }",
+            ]
+        )
     return lines
 
 

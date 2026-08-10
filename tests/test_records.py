@@ -34,6 +34,13 @@ def native_type80_fields() -> dict[str, object]:
         "smf80rl2": 140,
         "smf80ct2": 1,
         "smf80au2": 10,
+        "relocate_sections": [
+            {"data_type": 1, "offset": 104, "data": ebcdic("ALTUSER")},
+            {"data_type": 2, "offset": 113, "data": ebcdic("SECADM1")},
+        ],
+        "extended_relocate_sections": [
+            {"data_type": 257, "offset": 140, "data": ebcdic("PERMIT")},
+        ],
     }
 
 
@@ -72,6 +79,27 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertEqual(parsed.field_text("smf80usr"), "SECADM1")
         self.assertEqual(parsed.field_text("smf80grp"), "SYS1")
         self.assertEqual(parsed.field_text("smf80jbn"), "JOBNAME")
+
+    def test_parse_record_exposes_smf80_relocation_sections(self) -> None:
+        from pysmf import records
+
+        native = SimpleNamespace(
+            parse_record=lambda record_type, data: native_type80_fields()
+        )
+
+        with patch.object(records, "_native", native):
+            parsed = parse_record(standard_record(80))
+
+        self.assertEqual(len(parsed.sections), 2)
+        self.assertEqual(parsed.sections[0].data_type, 1)
+        self.assertEqual(parsed.sections[0].offset, 104)
+        self.assertEqual(parsed.sections[0].text, "ALTUSER")
+        self.assertEqual(parsed.sections[1].data_type, 2)
+        self.assertEqual(parsed.sections[1].text, "SECADM1")
+        self.assertEqual(len(parsed.extended_sections), 1)
+        self.assertEqual(parsed.extended_sections[0].data_type, 257)
+        self.assertEqual(parsed.extended_sections[0].offset, 140)
+        self.assertEqual(parsed.extended_sections[0].text, "PERMIT")
 
     def test_parse_record_requires_native_header_support(self) -> None:
         from pysmf import records

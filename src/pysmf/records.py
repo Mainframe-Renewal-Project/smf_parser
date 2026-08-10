@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .errors import HeaderCatalogError, SMFParseError
@@ -96,8 +97,10 @@ def _structured_record(
             continue
         if isinstance(value, bytes):
             scalar_fields[key] = value
+        elif isinstance(value, int):
+            scalar_fields[key] = value
         else:
-            scalar_fields[key] = int(value)
+            raise TypeError(f"SMF field {key!r} has unsupported value {value!r}")
     return StructuredSMFRecord(
         record_type=record_type,
         fields=scalar_fields,
@@ -130,11 +133,34 @@ def _validate_structured_record(
 def _sections(
     fields: dict[str, object], key: str
 ) -> tuple[SMFFieldSection, ...]:
+    sections = fields.get(key, ())
+    if not isinstance(sections, Iterable):
+        raise TypeError(f"SMF section field {key!r} is not iterable")
     return tuple(
         SMFFieldSection(
-            data_type=int(section["data_type"]),
-            data=bytes(section["data"]),
-            offset=int(section["offset"]),
+            data_type=_section_int(section, "data_type"),
+            data=_section_bytes(section, "data"),
+            offset=_section_int(section, "offset"),
         )
-        for section in fields.get(key, ())
+        for section in sections
     )
+
+
+def _section_int(section: object, key: str) -> int:
+    value = _section_value(section, key)
+    if not isinstance(value, int):
+        raise TypeError(f"SMF section {key!r} is not an integer: {value!r}")
+    return value
+
+
+def _section_bytes(section: object, key: str) -> bytes:
+    value = _section_value(section, key)
+    if not isinstance(value, bytes):
+        raise TypeError(f"SMF section {key!r} is not bytes: {value!r}")
+    return value
+
+
+def _section_value(section: object, key: str) -> object:
+    if not isinstance(section, Mapping):
+        raise TypeError(f"SMF section entry is not a mapping: {section!r}")
+    return section[key]
