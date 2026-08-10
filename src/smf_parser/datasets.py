@@ -421,10 +421,6 @@ def _drain_smf_buffer(
             offset=header_offset,
             header_definitions=header_definitions,
         )
-        if trusted_record_boundaries and record_length < len(buffer):
-            consumed += len(buffer)
-            del buffer[:]
-            return
         del buffer[:record_length]
         consumed += record_length
 
