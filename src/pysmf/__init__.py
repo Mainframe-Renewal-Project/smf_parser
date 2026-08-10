@@ -21,7 +21,7 @@ from .reader import (
     read_file,
     read_records,
 )
-from .records import SMFFieldSection, StructuredSMFRecord, parse_record
+from .records import SMFDecodedText, SMFFieldSection, StructuredSMFRecord, parse_record
 
 __all__ = [
     "ExternalRDW",
@@ -29,6 +29,7 @@ __all__ = [
     "HeaderCatalogError",
     "HeaderDefinition",
     "SMFError",
+    "SMFDecodedText",
     "SMFFieldSection",
     "SMFHeader",
     "SMFParseError",

@@ -27,6 +27,7 @@ def native_type80_fields() -> dict[str, object]:
         "smf80rst": 12_345,
         "smf80rsd": b"\x00\x20\x23\x1f",
         "smf80uid": ebcdic("USERID  "),
+        "smf80mix": ebcdic("BH0910") + b"\x00\xff",
         "smf80ver": 8,
         "smf80re2": 9,
         "smf80vrm": ebcdic("7700"),
@@ -79,6 +80,42 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertEqual(parsed.field_text("smf80usr"), "SECADM1")
         self.assertEqual(parsed.field_text("smf80grp"), "SYS1")
         self.assertEqual(parsed.field_text("smf80jbn"), "JOBNAME")
+
+    def test_parse_record_exposes_decoded_text_helpers(self) -> None:
+        from pysmf import records
+
+        native = SimpleNamespace(
+            parse_record=lambda record_type, data: native_type80_fields()
+        )
+
+        with patch.object(records, "_native", native):
+            parsed = parse_record(standard_record(80))
+
+        self.assertEqual(parsed.clean_field_text("smf80mix"), "BH0910")
+        self.assertEqual(parsed.decoded_fields()["smf80usr"], "SECADM1")
+        decoded = _decoded_summary(parsed.decoded_texts())
+        self.assertIn(("field", "smf80jbn", "JOBNAME"), decoded)
+        self.assertIn(("section", "relocate_sections", "ALTUSER"), decoded)
+        self.assertIn(
+            ("extended_section", "extended_relocate_sections", "PERMIT"),
+            decoded,
+        )
+
+    def test_parse_record_can_find_decoded_user_tokens(self) -> None:
+        from pysmf import records
+
+        native = SimpleNamespace(
+            parse_record=lambda record_type, data: native_type80_fields()
+        )
+
+        with patch.object(records, "_native", native):
+            parsed = parse_record(standard_record(80))
+
+        self.assertEqual(
+            [match.name for match in parsed.find_text("BH0910", token=True)],
+            ["smf80mix"],
+        )
+        self.assertEqual(parsed.find_text("H091", token=True), ())
 
     def test_parse_record_exposes_smf80_relocation_sections(self) -> None:
         from pysmf import records
@@ -142,6 +179,10 @@ class StructuredRecordTests(unittest.TestCase):
         with patch.object(records, "_native", native):
             with self.assertRaises(SMFParseError):
                 parse_record(standard_record(80))
+
+
+def _decoded_summary(decoded) -> set[tuple[str, str, str]]:
+    return {(value.source, value.name, value.text) for value in decoded}
 
 
 if __name__ == "__main__":

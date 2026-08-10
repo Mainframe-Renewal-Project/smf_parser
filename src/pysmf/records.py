@@ -16,6 +16,10 @@ except ImportError:
     _native = None
 _loaded_native = _native
 _native_parse_record = getattr(_native, "parse_record", None) if _native else None
+_PRINTABLE_TEXT = set(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 #$@._-/():,"
+)
+_TOKEN_CHARACTERS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$@")
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +33,21 @@ class SMFFieldSection:
     @property
     def text(self) -> str:
         return decode_ebcdic(self.data)
+
+    @property
+    def clean_text(self) -> str:
+        return _clean_decoded_text(self.text)
+
+
+@dataclass(frozen=True, slots=True)
+class SMFDecodedText:
+    """Decoded text from a header-backed SMF field or variable section."""
+
+    source: str
+    name: str
+    text: str
+    data_type: int | None = None
+    offset: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +64,66 @@ class StructuredSMFRecord:
 
     def field_text(self, key: str) -> str:
         return decode_ebcdic(_bytes_field(self.fields, key))
+
+    def clean_field_text(self, key: str) -> str:
+        return _clean_decoded_text(self.field_text(key))
+
+    def decoded_fields(self) -> dict[str, str]:
+        """Return printable decoded text for all bytes fields in the record."""
+
+        decoded: dict[str, str] = {}
+        for key, value in self.fields.items():
+            if not isinstance(value, bytes):
+                continue
+            text = _clean_decoded_text(decode_ebcdic(value))
+            if text:
+                decoded[key] = text
+        return decoded
+
+    def decoded_texts(self) -> tuple[SMFDecodedText, ...]:
+        """Return decoded printable text from fixed fields and sections."""
+
+        values: list[SMFDecodedText] = []
+        for key, text in self.decoded_fields().items():
+            values.append(SMFDecodedText(source="field", name=key, text=text))
+        for section in self.sections:
+            text = section.clean_text
+            if text:
+                values.append(
+                    SMFDecodedText(
+                        source="section",
+                        name="relocate_sections",
+                        text=text,
+                        data_type=section.data_type,
+                        offset=section.offset,
+                    )
+                )
+        for section in self.extended_sections:
+            text = section.clean_text
+            if text:
+                values.append(
+                    SMFDecodedText(
+                        source="extended_section",
+                        name="extended_relocate_sections",
+                        text=text,
+                        data_type=section.data_type,
+                        offset=section.offset,
+                    )
+                )
+        return tuple(values)
+
+    def find_text(
+        self, value: str, *, ignore_case: bool = True, token: bool = False
+    ) -> tuple[SMFDecodedText, ...]:
+        """Find decoded field/section text containing a value or token."""
+
+        if not value:
+            return ()
+        return tuple(
+            decoded
+            for decoded in self.decoded_texts()
+            if _text_matches(decoded.text, value, ignore_case=ignore_case, token=token)
+        )
 
 
 def parse_record(
@@ -114,6 +193,42 @@ def _bytes_field(fields: dict[str, int | bytes], key: str) -> bytes:
     if isinstance(value, bytes):
         return value
     raise TypeError(f"SMF field {key!r} is not a bytes field")
+
+
+def _clean_decoded_text(value: str) -> str:
+    cleaned = "".join(
+        character if character in _PRINTABLE_TEXT else " " for character in value
+    )
+    text = " ".join(cleaned.strip().split())
+    if len(text) < 2 or text.isdigit():
+        return ""
+    return text
+
+
+def _text_matches(
+    text: str, value: str, *, ignore_case: bool, token: bool
+) -> bool:
+    haystack = text.upper() if ignore_case else text
+    needle = value.upper() if ignore_case else value
+    if not token:
+        return needle in haystack
+    start = 0
+    while True:
+        index = haystack.find(needle, start)
+        if index < 0:
+            return False
+        before_index = index - 1
+        after_index = index + len(needle)
+        before_ok = (
+            before_index < 0 or haystack[before_index].upper() not in _TOKEN_CHARACTERS
+        )
+        after_ok = (
+            after_index >= len(haystack)
+            or haystack[after_index].upper() not in _TOKEN_CHARACTERS
+        )
+        if before_ok and after_ok:
+            return True
+        start = index + 1
 
 
 def _validate_structured_record(
