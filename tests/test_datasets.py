@@ -2,65 +2,24 @@ from __future__ import annotations
 
 import struct
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from smf_parser import (
-    HeaderCatalog,
-    HeaderDefinition,
     TruncatedSMFRecordError,
     ZOAUMissingError,
     ZOAUUnsupportedDatasetError,
     read_dataset,
     read_dataset_records,
 )
-
-try:
-    "".encode("cp1047")
-except LookupError:
-    EBCDIC_TEST_ENCODING = "cp037"
-else:
-    EBCDIC_TEST_ENCODING = "cp1047"
-
-
-def ebcdic(value: str) -> bytes:
-    return value.encode(EBCDIC_TEST_ENCODING)
-
-
-def standard_record(
-    record_type: int,
-    *,
-    subtype: int = 0,
-    system_id: str = "SYS1",
-    date: bytes = b"\x00\x20\x23\x1f",
-    body: bytes = b"",
-) -> bytes:
-    length = 24 + len(body)
-    return (
-        struct.pack(
-            ">HHBBi4s4s4sH",
-            length,
-            0,
-            0x40,
-            record_type,
-            12_345,
-            date,
-            ebcdic(system_id),
-            ebcdic("SMF "),
-            subtype,
-        )
-        + body
-    )
-
-
-def vbs_block(*segments: tuple[int, bytes], trailing: bytes = b"") -> bytes:
-    encoded_segments = b"".join(
-        struct.pack(">HBB", len(data) + 4, control, 0) + data
-        for control, data in segments
-    )
-    block = struct.pack(">HH", len(encoded_segments) + 4, 0) + encoded_segments
-    return block + trailing
+from tests.helpers import (
+    ebcdic,
+    header_catalog,
+    native_reader,
+    standard_record,
+    vbs_block,
+    vbs_import_module_side_effect,
+)
 
 
 def false_record_candidate() -> bytes:
@@ -111,21 +70,6 @@ def incomplete_record_with_embedded_supported_candidate() -> bytes:
 def invalid_length_with_embedded_supported_candidate() -> bytes:
     embedded = standard_record(1, system_id="SYS2")
     return struct.pack(">H", 2) + (b"x" * 16) + embedded
-
-
-def header_catalog(*record_types: int) -> HeaderCatalog:
-    include_dir = Path("/compiled/zos")
-    return HeaderCatalog(
-        include_dir=include_dir,
-        headers=(
-            HeaderDefinition(
-                name="ifasmfr.h",
-                path=include_dir / "ifasmfr.h",
-                record_types=record_types,
-                generic=False,
-            ),
-        ),
-    )
 
 
 class DatasetReaderTests(unittest.TestCase):
@@ -313,31 +257,10 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(calls, [("USER.SMF.UNLOAD", 10, 3, True)])
 
     def test_read_dataset_rejects_zoau_vbs_datasets(self) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            raise ImportError(name)
-
         with (
             patch(
                 "smf_parser.datasets.import_module",
-                side_effect=import_module_side_effect,
+                side_effect=vbs_import_module_side_effect(),
             ),
             self.assertRaises(ZOAUUnsupportedDatasetError),
         ):
@@ -345,21 +268,6 @@ class DatasetReaderTests(unittest.TestCase):
 
     def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
         calls: list[tuple[str, int, int, bool, frozenset[int] | None]] = []
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS"),
-                    SimpleNamespace(name=f"{base}.G0002V00", record_format="VBS"),
-                    SimpleNamespace(name=f"{base}.G0003V00", record_format="VBS"),
-                ]
-            )
-        )
 
         def read_vbs_dataset(
             dataset_name: str,
@@ -374,17 +282,12 @@ class DatasetReaderTests(unittest.TestCase):
 
         fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
 
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
-
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(
+                fake_native,
+                generation_count=3,
+            ),
         ):
             parsed = list(
                 read_dataset(
@@ -407,19 +310,6 @@ class DatasetReaderTests(unittest.TestCase):
         self,
     ) -> None:
         calls: list[tuple[str, int, int, bool]] = []
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
 
         def read_vbs_dataset(
             dataset_name: str, *, records: int, offset: int, tail: bool
@@ -429,17 +319,9 @@ class DatasetReaderTests(unittest.TestCase):
 
         fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
 
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
-
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset(
@@ -457,36 +339,11 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_parses_multiple_smf_records_from_one_native_vbs_chunk(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda *args, **kwargs: [
-                standard_record(2) + standard_record(30)
-            ]
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([standard_record(2) + standard_record(30)])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset(
@@ -499,21 +356,8 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_reconstructs_complete_records_from_native_vbs_block(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda *args, **kwargs: [
+        fake_native = native_reader(
+            [
                 vbs_block(
                     (0x00, standard_record(2)),
                     (0x00, standard_record(30)),
@@ -522,17 +366,9 @@ class DatasetReaderTests(unittest.TestCase):
             ]
         )
 
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
-
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset(
@@ -545,38 +381,17 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_reconstructs_spanned_record_from_native_vbs_blocks(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         record = standard_record(30, body=b"payload" * 100)
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda *args, **kwargs: [
+        fake_native = native_reader(
+            [
                 vbs_block((0x40, record[:128])),
                 vbs_block((0x80, record[128:])),
             ]
         )
 
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
-
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
@@ -599,40 +414,13 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_does_not_concatenate_incomplete_native_vbs_chunks(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         incomplete = standard_record(2, system_id="DBRA", body=b"payload" * 20)[:31]
         complete = standard_record(30, system_id="DBRA", body=b"complete")
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
-                incomplete,
-                complete,
-            ],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([incomplete, complete])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
@@ -643,40 +431,13 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_does_not_concatenate_new_native_vbs_record_starts(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         incomplete = standard_record(2, system_id="DBRA", body=b"a" * 2000)[:1408]
         complete = standard_record(30, system_id="DBRA", body=b"complete")
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
-                incomplete,
-                complete,
-            ],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([incomplete, complete])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
@@ -685,39 +446,13 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual([record.record_type for record in parsed], [30])
 
     def test_read_dataset_does_not_scan_trailing_native_vbs_bytes(self) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         record = standard_record(2, system_id="DBRA", body=b"first")
         trailing_payload = b"not an SMF record"
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
-                record + trailing_payload
-            ],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([record + trailing_payload])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
@@ -728,40 +463,13 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_skips_native_vbs_records_without_compiled_headers(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         unsupported_record = standard_record(102, system_id="DBRA", body=b"unsupported")
         supported_record = standard_record(2, system_id="DBRA", body=b"supported")
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
-                unsupported_record,
-                supported_record,
-            ],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([unsupported_record, supported_record])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2))
@@ -772,41 +480,15 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_does_not_resync_inside_implausible_native_vbs_chunk(
         self,
     ) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         implausible_record = standard_record(
             2, system_id="DBRA", date=ebcdic("BAD "), body=b"implausible"
         )
         supported_record = standard_record(30, system_id="DBRA", body=b"supported")
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
-                implausible_record + supported_record
-            ],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([implausible_record + supported_record])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
@@ -815,19 +497,6 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(parsed, [])
 
     def test_read_dataset_accepts_date_first_native_vbs_header(self) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         record = struct.pack(
             ">HHBB4s4s4sH",
             20,
@@ -839,22 +508,11 @@ class DatasetReaderTests(unittest.TestCase):
             ebcdic("SMF "),
             7,
         )
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([record])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(102))
@@ -865,19 +523,6 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(parsed[0].header.system_id_text, "SYS1")
 
     def test_read_dataset_rejects_date_first_text_as_subtype(self) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail(
-                "read_as_bytes should not be called for VBS datasets"
-            ),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[
-                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
-                ]
-            )
-        )
         false_record = struct.pack(
             ">HHBB4s4s4s2s",
             20,
@@ -890,25 +535,11 @@ class DatasetReaderTests(unittest.TestCase):
             ebcdic("UP"),
         )
         supported_record = standard_record(30, system_id="SYS1", body=b"supported")
-
-        fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
-                false_record,
-                supported_record,
-            ],
-        )
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
+        fake_native = native_reader([false_record, supported_record])
 
         with patch(
-            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
                 read_dataset(
