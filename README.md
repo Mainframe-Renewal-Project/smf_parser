@@ -1,6 +1,6 @@
 # pySMF
 
-Python tools for reading and interpreting z/OS SMF unloads.
+pySMF is a Python API for reading and interpreting z/OS SMF unloads.
 
 Real SMF parsing is intended to run on z/OS. The parser relies on IBM-provided
 z/OS C SMF headers and a native extension built against those headers; copied
@@ -27,7 +27,7 @@ catalog = HeaderCatalog.discover()
 print(catalog.for_record_type(92))
 ```
 
-On z/OS systems with ZOAU configured, SMF unloads can also be read directly from
+On z/OS systems with ZOAU installed, SMF unloads can also be read directly from
 datasets. ZOAU is optional and is not declared as a package dependency because
 `zoautil_py` is not distributed on PyPI.
 
