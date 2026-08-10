@@ -335,20 +335,20 @@ def _vbs_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
 def _vbs_segment_control(descriptor: bytes) -> int | None:
     descriptor_word = int.from_bytes(descriptor, "big")
     high_bits = descriptor_word & 0xC000
-    if high_bits:
-        return {
-            0x4000: _VBS_SEGMENT_FIRST,
-            0x8000: _VBS_SEGMENT_LAST,
-            0xC000: _VBS_SEGMENT_MIDDLE,
-        }.get(high_bits)
+    if high_bits == 0x4000:
+        return _VBS_SEGMENT_FIRST
+    if high_bits == 0x8000:
+        return _VBS_SEGMENT_LAST
+    if high_bits == 0xC000:
+        return _VBS_SEGMENT_MIDDLE
 
     high_byte_bits = descriptor[0] & 0xC0
-    if high_byte_bits:
-        return {
-            0x40: _VBS_SEGMENT_FIRST,
-            0x80: _VBS_SEGMENT_LAST,
-            0xC0: _VBS_SEGMENT_MIDDLE,
-        }.get(high_byte_bits)
+    if high_byte_bits == 0x40:
+        return _VBS_SEGMENT_FIRST
+    if high_byte_bits == 0x80:
+        return _VBS_SEGMENT_LAST
+    if high_byte_bits == 0xC0:
+        return _VBS_SEGMENT_MIDDLE
 
     byte_low_bits = descriptor[0] & 0x03
     if byte_low_bits:
@@ -363,7 +363,10 @@ def _vbs_segment_control(descriptor: bytes) -> int | None:
 
 
 def _vbs_segment_data_is_plausible(segment_control: int, segment_data: bytes) -> bool:
-    if segment_control not in {_VBS_SEGMENT_COMPLETE, _VBS_SEGMENT_FIRST}:
+    if (
+        segment_control != _VBS_SEGMENT_COMPLETE
+        and segment_control != _VBS_SEGMENT_FIRST
+    ):
         return True
     if len(segment_data) < 2:
         return False
@@ -649,13 +652,7 @@ def _is_plausible_identifier(value: bytes, *, allow_blank: bool) -> bool:
 
 
 def _is_plausible_smf_date(value: bytes) -> bool:
-    if len(value) != 4:
-        return False
-    nibbles = tuple(nibble for byte in value for nibble in (byte >> 4, byte & 0x0F))
-    if nibbles[-1] != 0x0F or any(nibble > 9 for nibble in nibbles[:-1]):
-        return False
-    day_of_year = nibbles[4] * 100 + nibbles[5] * 10 + nibbles[6]
-    return 1 <= day_of_year <= 366
+    return is_packed_smf_date(value)
 
 
 def _read_one_rdw_dataset_record(

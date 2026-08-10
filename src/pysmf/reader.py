@@ -21,6 +21,14 @@ try:
     _native: Any | None = import_module("pysmf._native")
 except ImportError:
     _native = None
+_loaded_native = _native
+_native_parse_header = getattr(_native, "parse_header", None) if _native else None
+_native_decode_smf_time_hundredths = (
+    getattr(_native, "decode_smf_time_hundredths", None) if _native else None
+)
+_native_is_packed_smf_date = (
+    getattr(_native, "is_packed_smf_date", None) if _native else None
+)
 
 RecordFormat = Literal["auto", "smf", "rdw"]
 
@@ -144,22 +152,40 @@ def decode_smf_time_hundredths(value: bytes | bytearray | memoryview) -> int:
     """Decode an SMF time field to hundredths of a second after midnight."""
 
     data = bytes(value)
-    native = _native
-    if native is not None and len(data) == 4:
-        native_decode = getattr(native, "decode_smf_time_hundredths", None)
+    if len(data) == 4:
+        native_decode = _native_decode_smf_time_hundredths
+        native = _native
+        if native is not _loaded_native and native is not None:
+            native_decode = getattr(native, "decode_smf_time_hundredths", None)
         if native_decode is not None:
             return native_decode(data)
-    if len(data) == 4:
-        nibbles = tuple(nibble for byte in data for nibble in (byte >> 4, byte & 0x0F))
-        if nibbles[-1] in (0x0C, 0x0D, 0x0F) and all(
-            nibble <= 9 for nibble in nibbles[:-1]
-        ):
-            hours = nibbles[0] * 10 + nibbles[1]
-            minutes = nibbles[2] * 10 + nibbles[3]
-            seconds = nibbles[4] * 10 + nibbles[5]
-            tenths = nibbles[6]
-            if hours <= 23 and minutes <= 59 and seconds <= 59:
-                return ((hours * 60 + minutes) * 60 + seconds) * 100 + tenths * 10
+        first = data[0]
+        second = data[1]
+        third = data[2]
+        fourth = data[3]
+        sign = fourth & 0x0F
+        if sign in (0x0C, 0x0D, 0x0F):
+            hours_tens = first >> 4
+            hours_ones = first & 0x0F
+            minutes_tens = second >> 4
+            minutes_ones = second & 0x0F
+            seconds_tens = third >> 4
+            seconds_ones = third & 0x0F
+            tenths = fourth >> 4
+            if (
+                hours_tens <= 9
+                and hours_ones <= 9
+                and minutes_tens <= 9
+                and minutes_ones <= 9
+                and seconds_tens <= 9
+                and seconds_ones <= 9
+                and tenths <= 9
+            ):
+                hours = hours_tens * 10 + hours_ones
+                minutes = minutes_tens * 10 + minutes_ones
+                seconds = seconds_tens * 10 + seconds_ones
+                if hours <= 23 and minutes <= 59 and seconds <= 59:
+                    return ((hours * 60 + minutes) * 60 + seconds) * 100 + tenths * 10
     return struct.unpack(">i", data)[0]
 
 
@@ -167,35 +193,57 @@ def is_packed_smf_date(value: bytes | bytearray | memoryview) -> bool:
     """Return whether bytes look like an SMF packed date, 0cyydddF."""
 
     data = bytes(value)
-    native = _native
-    if native is not None:
-        native_check = getattr(native, "is_packed_smf_date", None)
-        if native_check is not None:
-            return native_check(data)
     if len(data) != 4:
         return False
-    nibbles = tuple(nibble for byte in data for nibble in (byte >> 4, byte & 0x0F))
-    if nibbles[-1] != 0x0F or any(nibble > 9 for nibble in nibbles[:-1]):
+    native_check = _native_is_packed_smf_date
+    native = _native
+    if native is not _loaded_native and native is not None:
+        native_check = getattr(native, "is_packed_smf_date", None)
+    if native_check is not None:
+        return native_check(data)
+    first = data[0]
+    second = data[1]
+    third = data[2]
+    fourth = data[3]
+    if fourth & 0x0F != 0x0F:
         return False
-    day_of_year = nibbles[4] * 100 + nibbles[5] * 10 + nibbles[6]
+    year_high = second >> 4
+    year_low = second & 0x0F
+    day_hundreds = third >> 4
+    day_tens = third & 0x0F
+    day_ones = fourth >> 4
+    if (
+        first >> 4 > 9
+        or first & 0x0F > 9
+        or year_high > 9
+        or year_low > 9
+        or day_hundreds > 9
+        or day_tens > 9
+        or day_ones > 9
+    ):
+        return False
+    day_of_year = day_hundreds * 100 + day_tens * 10 + day_ones
     return 1 <= day_of_year <= 366
 
 
 def parse_header(data: bytes | bytearray | memoryview, *, offset: int = 0) -> SMFHeader:
     """Parse the standard SMF header from a record byte string."""
 
+    native_parse_header = _native_parse_header
     native = _native
-    if native is not None:
-        return _parse_header_native(native, data, offset=offset)
+    if native is not _loaded_native and native is not None:
+        native_parse_header = getattr(native, "parse_header")
+    if native_parse_header is not None:
+        return _parse_header_native(native_parse_header, data, offset=offset)
 
     return _parse_header_python(data, offset=offset)
 
 
 def _parse_header_native(
-    native: Any, data: bytes | bytearray | memoryview, *, offset: int
+    native_parse_header: Any, data: bytes | bytearray | memoryview, *, offset: int
 ) -> SMFHeader:
     try:
-        fields = native.parse_header(data)
+        fields = native_parse_header(data)
     except EOFError as error:
         raise TruncatedSMFRecordError(str(error), offset=offset) from error
     except ValueError as error:
