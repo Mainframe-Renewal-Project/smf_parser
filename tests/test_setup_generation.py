@@ -133,6 +133,17 @@ class SetupGenerationTests(unittest.TestCase):
 
         self.assertNotIn("append_self_defining_section_directory", directory_lines)
 
+    def test_variable_sections_report_invalid_header_metadata(self) -> None:
+        native = native_source()
+        variable_parser = generated_function_source(
+            native, "append_self_defining_variable_sections"
+        )
+
+        self.assertIn("if (section_count == 0)", variable_parser)
+        self.assertIn("PyErr_SetString(PyExc_ValueError", variable_parser)
+        self.assertIn("SMF variable section offset is outside the record", variable_parser)
+        self.assertIn("SMF variable section length is outside the record", variable_parser)
+
     def test_native_section_directory_can_use_header_anchor_without_count(
         self,
     ) -> None:

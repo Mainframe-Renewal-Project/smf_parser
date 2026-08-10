@@ -144,14 +144,20 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
     PyObject *list;
     unsigned long long occurrence;
     unsigned long long base_offset;
-    if (section_offset == 0 || section_count == 0 || type_size == 0 || length_size == 0) {
+    if (section_count == 0) {
         return 0;
+    }
+    if (section_offset == 0 || type_size == 0 || length_size == 0) {
+        PyErr_SetString(PyExc_ValueError, "SMF variable section metadata has a zero offset or field size");
+        return -1;
     }
     if (section_count > 4096 || type_size > 2 || length_size > 2 || data_offset > 16) {
-        return 0;
+        PyErr_SetString(PyExc_ValueError, "SMF variable section metadata is outside supported bounds");
+        return -1;
     }
     if (section_offset > (unsigned long long)record_length) {
-        return 0;
+        PyErr_SetString(PyExc_ValueError, "SMF variable section offset is outside the record");
+        return -1;
     }
     list = section_list(dict, key);
     if (list == NULL) {
@@ -164,14 +170,16 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
         unsigned long long payload_offset;
         unsigned long long next_offset;
         if (base_offset + data_offset > (unsigned long long)record_length) {
-            return 0;
+            PyErr_SetString(PyExc_ValueError, "SMF variable section header extends past the record");
+            return -1;
         }
         data_type = read_unsigned_be(data + base_offset, (Py_ssize_t)type_size);
         section_length = read_unsigned_be(data + base_offset + type_size, (Py_ssize_t)length_size);
         payload_offset = base_offset + data_offset;
         next_offset = payload_offset + section_length;
         if (section_length == 0 || section_length > 4096 || next_offset > (unsigned long long)record_length) {
-            return 0;
+            PyErr_SetString(PyExc_ValueError, "SMF variable section length is outside the record");
+            return -1;
         }
         if (append_section(list, data_type, data + payload_offset, (Py_ssize_t)section_length, (Py_ssize_t)payload_offset) < 0) {
             return -1;
