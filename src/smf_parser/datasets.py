@@ -39,6 +39,7 @@ def read_dataset(
     skip_short_records: bool = True,
     header_catalog: HeaderCatalog | None = None,
     system_ids: Collection[str] | None = None,
+    record_types: Collection[int] | None = None,
     records: int = 0,
     offset: int = 0,
     tail: bool = False,
@@ -51,6 +52,7 @@ def read_dataset(
     """
 
     datasets = _zoau_datasets_module()
+    selected_record_types = _normalized_record_types(record_types)
     vbs_entries = _zoau_vbs_dataset_entries(datasets, dataset_name)
     if vbs_entries:
         dataset_records = _read_native_vbs_dataset_records(
@@ -59,11 +61,13 @@ def read_dataset(
             records=records,
             offset=offset,
             tail=tail,
+            record_types=selected_record_types,
         )
         yield from _read_native_vbs_smf_records(
             dataset_records,
             header_catalog=header_catalog,
             system_ids=system_ids,
+            record_types=selected_record_types,
         )
         return
     else:
@@ -74,6 +78,7 @@ def read_dataset(
         skip_short_records=skip_short_records,
         header_catalog=header_catalog,
         system_ids=system_ids,
+        record_types=selected_record_types,
     )
 
 
@@ -84,6 +89,7 @@ def read_dataset_records(
     skip_short_records: bool = True,
     header_catalog: HeaderCatalog | None = None,
     system_ids: Collection[str] | None = None,
+    record_types: Collection[int] | None = None,
 ) -> Iterator[SMFRecord]:
     """Yield SMF records from dataset records returned by ZOAU.
 
@@ -98,6 +104,7 @@ def read_dataset_records(
     """
 
     catalog = _require_header_catalog(header_catalog)
+    selected_record_types = _normalized_record_types(record_types)
 
     if record_format in ("auto", "smf"):
         yield from _read_smf_dataset_records(
@@ -106,6 +113,7 @@ def read_dataset_records(
             skip_short_records=skip_short_records,
             header_catalog=catalog,
             system_ids=system_ids,
+            record_types=selected_record_types,
         )
         return
 
@@ -117,8 +125,23 @@ def read_dataset_records(
         if skip_short_records and len(data) < _MIN_SMF_RECORD_LENGTH:
             logical_offset += len(data)
             continue
-        yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset, header_catalog=catalog)
+        yield from _read_one_rdw_dataset_record(
+            data,
+            logical_offset=logical_offset,
+            header_catalog=catalog,
+            record_types=selected_record_types,
+        )
         logical_offset += len(data)
+
+
+def _normalized_record_types(record_types: Collection[int] | None) -> frozenset[int] | None:
+    if record_types is None:
+        return None
+    normalized = frozenset(record_types)
+    for record_type in normalized:
+        if not 0 <= record_type <= 65535:
+            raise ValueError(f"SMF record type must be between 0 and 65535: {record_type!r}")
+    return normalized
 
 
 def _zoau_datasets_module():
@@ -188,6 +211,7 @@ def _read_native_vbs_dataset_records(
     records: int,
     offset: int,
     tail: bool,
+    record_types: frozenset[int] | None,
 ) -> Iterable[bytes]:
     try:
         native = import_module("smf_parser._native")
@@ -198,7 +222,7 @@ def _read_native_vbs_dataset_records(
     if read_vbs_dataset is None:
         raise _unsupported_vbs_dataset_error(dataset_name, entries)
     resolved_dataset_name = _resolve_relative_gdg_name(dataset_name, entries)
-    return read_vbs_dataset(resolved_dataset_name, records=records, offset=offset, tail=tail)
+    return read_vbs_dataset(resolved_dataset_name, records=records, offset=offset, tail=tail, record_types=record_types)
 
 
 def _read_native_vbs_smf_records(
@@ -206,6 +230,7 @@ def _read_native_vbs_smf_records(
     *,
     header_catalog: HeaderCatalog | None,
     system_ids: Collection[str] | None,
+    record_types: frozenset[int] | None,
 ) -> Iterator[SMFRecord]:
     yield from _read_smf_dataset_records(
         records,
@@ -213,6 +238,7 @@ def _read_native_vbs_smf_records(
         skip_short_records=False,
         header_catalog=_require_header_catalog(header_catalog),
         system_ids=system_ids,
+        record_types=record_types,
         split_on_record_start=True,
         skip_invalid_records=True,
         trusted_record_boundaries=True,
@@ -276,6 +302,7 @@ def _read_smf_dataset_records(
     skip_short_records: bool,
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
+    record_types: frozenset[int] | None,
     split_on_record_start: bool = True,
     skip_invalid_records: bool | None = None,
     trusted_record_boundaries: bool = False,
@@ -310,6 +337,7 @@ def _read_smf_dataset_records(
             skip_invalid_records=skip_invalid,
             header_catalog=header_catalog,
             system_ids=system_ids,
+            record_types=record_types,
             trusted_record_boundaries=trusted_record_boundaries,
         )
         logical_offset += len(data)
@@ -325,6 +353,7 @@ def _drain_smf_buffer(
     skip_invalid_records: bool,
     header_catalog: HeaderCatalog,
     system_ids: Collection[str] | None,
+    record_types: frozenset[int] | None,
     trusted_record_boundaries: bool = False,
 ) -> Iterator[SMFRecord]:
     consumed = 0
@@ -360,6 +389,10 @@ def _drain_smf_buffer(
             if not trusted_record_boundaries:
                 del buffer[:]
                 return
+            del buffer[:record_length]
+            consumed += record_length
+            continue
+        if record_types is not None and header.record_type not in record_types:
             del buffer[:record_length]
             consumed += record_length
             continue
@@ -472,8 +505,16 @@ def _is_plausible_smf_date(value: bytes) -> bool:
     return 1 <= day_of_year <= 366
 
 
-def _read_one_rdw_dataset_record(data: bytes, *, logical_offset: int, header_catalog: HeaderCatalog) -> Iterator[SMFRecord]:
+def _read_one_rdw_dataset_record(
+    data: bytes,
+    *,
+    logical_offset: int,
+    header_catalog: HeaderCatalog,
+    record_types: frozenset[int] | None = None,
+) -> Iterator[SMFRecord]:
     for record in read_records(data, record_format="rdw", header_catalog=header_catalog):
+        if record_types is not None and record.record_type not in record_types:
+            continue
         yield SMFRecord(
             data=record.data,
             header=record.header,

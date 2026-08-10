@@ -280,7 +280,7 @@ class DatasetReaderTests(unittest.TestCase):
             list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
 
     def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
-        calls: list[tuple[str, int, int, bool]] = []
+        calls: list[tuple[str, int, int, bool, frozenset[int] | None]] = []
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
             read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
@@ -295,8 +295,15 @@ class DatasetReaderTests(unittest.TestCase):
             )
         )
 
-        def read_vbs_dataset(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
-            calls.append((dataset_name, records, offset, tail))
+        def read_vbs_dataset(
+            dataset_name: str,
+            *,
+            records: int,
+            offset: int,
+            tail: bool,
+            record_types: frozenset[int] | None,
+        ) -> list[bytes]:
+            calls.append((dataset_name, records, offset, tail, record_types))
             return [standard_record(2, system_id="DBRA")]
 
         fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
@@ -319,11 +326,23 @@ class DatasetReaderTests(unittest.TestCase):
                     tail=True,
                     header_catalog=header_catalog(2),
                     system_ids={"DBRA"},
+                    record_types={2},
                 )
             )
 
         self.assertEqual([record.record_type for record in parsed], [2])
-        self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True)])
+        self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True, frozenset({2}))])
+
+    def test_read_dataset_records_filters_record_types(self) -> None:
+        records = list(
+            read_dataset_records(
+                [standard_record(2), standard_record(30), standard_record(80)],
+                header_catalog=header_catalog(2, 30, 80),
+                record_types={30, 80},
+            )
+        )
+
+        self.assertEqual([record.record_type for record in records], [30, 80])
 
     def test_read_dataset_does_not_concatenate_incomplete_native_vbs_chunks(self) -> None:
         fake_datasets = SimpleNamespace(
@@ -339,7 +358,7 @@ class DatasetReaderTests(unittest.TestCase):
         complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [incomplete, complete],
         )
 
         def import_module_side_effect(name: str):
@@ -370,7 +389,7 @@ class DatasetReaderTests(unittest.TestCase):
         complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [incomplete, complete],
         )
 
         def import_module_side_effect(name: str):
@@ -401,7 +420,7 @@ class DatasetReaderTests(unittest.TestCase):
         trailing_payload_candidate = standard_record(30, system_id="DBRA", body=b"payload")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record + trailing_payload_candidate],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [record + trailing_payload_candidate],
         )
 
         def import_module_side_effect(name: str):
@@ -432,7 +451,7 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(2, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [unsupported_record, supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [unsupported_record, supported_record],
         )
 
         def import_module_side_effect(name: str):
@@ -463,7 +482,7 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(30, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [implausible_record + supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [implausible_record + supported_record],
         )
 
         def import_module_side_effect(name: str):
@@ -503,7 +522,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [record],
         )
 
         def import_module_side_effect(name: str):
@@ -546,7 +565,7 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(30, system_id="SYS1", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [false_record, supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [false_record, supported_record],
         )
 
         def import_module_side_effect(name: str):

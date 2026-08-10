@@ -56,6 +56,17 @@ for record in read_dataset("USER.SMF.UNLOAD(0)", system_ids={"DBRA"}):
     print(record.record_type, record.subtype)
 ```
 
+For large unloads or GDGs, pass `record_types` to avoid returning records the
+caller will discard. On native z/OS VBS dataset reads, pySMF pushes this filter
+down before Python record objects are allocated.
+
+```python
+from pysmf import read_dataset
+
+for record in read_dataset("USER.SMF.UNLOAD(0)", record_types={80}):
+  print(record.record_type, record.subtype)
+```
+
 For generation data groups, pass the relative or absolute generation data set
 name exactly as ZOAU expects it, such as `USER.SMF.UNLOAD(0)`,
 `USER.SMF.UNLOAD(-1)`, or `USER.SMF.UNLOAD.G0001V00`.
