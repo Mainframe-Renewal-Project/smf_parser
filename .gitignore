@@ -231,3 +231,11 @@ local_headers/zos/*
 !local_headers/IBM/
 local_headers/IBM/*
 !local_headers/IBM/.gitkeep
+
+# Local raw SMF data for parser/debug development.
+# Keep copied SMF unloads and record captures out of git.
+local_data/*
+!local_data/README.md
+!local_data/smf/
+local_data/smf/*
+!local_data/smf/.gitkeep
