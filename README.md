@@ -7,7 +7,7 @@ z/OS C SMF headers and a native extension built against those headers; copied
 headers on Linux or Windows are useful for source reference, but they do not
 provide a meaningful supported parsing runtime on those platforms.
 
-## Header-backed SMF record coverage
+## SMF record coverage
 
 The API accepts SMF records only when the package was built with a matching IBM
 C header for that record type. Current registry coverage is:
