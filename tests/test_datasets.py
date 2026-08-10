@@ -476,10 +476,10 @@ class DatasetReaderTests(unittest.TestCase):
             )
         )
         record = standard_record(2, system_id="DBRA", body=b"first")
-        trailing_payload_candidate = standard_record(30, system_id="DBRA", body=b"payload")
+        trailing_payload = b"not an SMF record"
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record + trailing_payload_candidate],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record + trailing_payload],
         )
 
         def import_module_side_effect(name: str):
