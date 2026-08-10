@@ -177,6 +177,10 @@ int append_self_defining_variable_sections(PyObject *dict, const char *key, cons
         section_length = read_unsigned_be(data + base_offset + type_size, (Py_ssize_t)length_size);
         payload_offset = base_offset + data_offset;
         next_offset = payload_offset + section_length;
+        if (data_type == 0 && section_length == 0) {
+            base_offset += data_offset;
+            continue;
+        }
         if (section_length == 0 || section_length > 4096 || next_offset > (unsigned long long)record_length) {
             PyErr_SetString(PyExc_ValueError, "SMF variable section length is outside the record");
             return -1;
