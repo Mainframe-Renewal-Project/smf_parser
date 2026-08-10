@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -40,30 +40,28 @@ class SMFFieldSection:
 
 
 @dataclass(frozen=True, slots=True)
-class SMFDecodedText:
-    """Decoded text from a header-backed SMF field or variable section."""
-
-    source: str
-    name: str
-    text: str
-    data_type: int | None = None
-    offset: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class StructuredSMFRecord:
     """Header-backed fields and variable sections for one SMF record."""
 
     record_type: int
-    fields: dict[str, int | bytes]
+    fields: dict[str, int | bytes | str]
     sections: tuple[SMFFieldSection, ...] = ()
     extended_sections: tuple[SMFFieldSection, ...] = ()
+    raw_fields: dict[str, int | bytes] = field(default_factory=dict)
 
-    def __getitem__(self, key: str) -> int | bytes:
+    def __getitem__(self, key: str) -> int | bytes | str:
         return self.fields[key]
 
     def field_text(self, key: str) -> str:
-        return decode_ebcdic(_bytes_field(self.fields, key))
+        value = self.fields[key]
+        if isinstance(value, str):
+            return value
+        if isinstance(value, bytes):
+            return decode_ebcdic(value)
+        raw_value = self.raw_fields.get(key)
+        if isinstance(raw_value, bytes):
+            return decode_ebcdic(raw_value)
+        raise TypeError(f"SMF field {key!r} is not a text field")
 
     def clean_field_text(self, key: str) -> str:
         return _clean_decoded_text(self.field_text(key))
@@ -73,57 +71,56 @@ class StructuredSMFRecord:
 
         decoded: dict[str, str] = {}
         for key, value in self.fields.items():
-            if not isinstance(value, bytes):
+            if isinstance(value, str):
+                text = value
+            elif isinstance(value, bytes):
+                text = _clean_decoded_text(decode_ebcdic(value))
+            else:
                 continue
-            text = _clean_decoded_text(decode_ebcdic(value))
             if text:
                 decoded[key] = text
         return decoded
 
-    def decoded_texts(self) -> tuple[SMFDecodedText, ...]:
+    def decoded_texts(self) -> tuple[str, ...]:
         """Return decoded printable text from fixed fields and sections."""
 
-        values: list[SMFDecodedText] = []
-        for key, text in self.decoded_fields().items():
-            values.append(SMFDecodedText(source="field", name=key, text=text))
+        values: list[str] = []
+        values.extend(self.decoded_fields().values())
         for section in self.sections:
             text = section.clean_text
             if text:
-                values.append(
-                    SMFDecodedText(
-                        source="section",
-                        name="relocate_sections",
-                        text=text,
-                        data_type=section.data_type,
-                        offset=section.offset,
-                    )
-                )
+                values.append(text)
         for section in self.extended_sections:
             text = section.clean_text
             if text:
-                values.append(
-                    SMFDecodedText(
-                        source="extended_section",
-                        name="extended_relocate_sections",
-                        text=text,
-                        data_type=section.data_type,
-                        offset=section.offset,
-                    )
-                )
+                values.append(text)
         return tuple(values)
 
     def find_text(
         self, value: str, *, ignore_case: bool = True, token: bool = False
-    ) -> tuple[SMFDecodedText, ...]:
+    ) -> tuple[str, ...]:
         """Find decoded field/section text containing a value or token."""
 
         if not value:
             return ()
         return tuple(
-            decoded
-            for decoded in self.decoded_texts()
-            if _text_matches(decoded.text, value, ignore_case=ignore_case, token=token)
+            text
+            for text in self.decoded_texts()
+            if _text_matches(text, value, ignore_case=ignore_case, token=token)
         )
+
+    def decoded_tokens(
+        self, *, min_length: int = 2, max_length: int = 64
+    ) -> tuple[str, ...]:
+        """Return alphanumeric/@#$ tokens from decoded fields and sections."""
+
+        values: list[str] = []
+        for text in self.decoded_texts():
+            for token in _decoded_tokens(
+                text, min_length=min_length, max_length=max_length
+            ):
+                values.append(token)
+        return tuple(values)
 
 
 def parse_record(
@@ -170,14 +167,18 @@ def _structured_record(
 ) -> StructuredSMFRecord:
     regular_sections = _sections(fields, "relocate_sections")
     extended_sections = _sections(fields, "extended_relocate_sections")
-    scalar_fields: dict[str, int | bytes] = {}
+    scalar_fields: dict[str, int | bytes | str] = {}
+    raw_fields: dict[str, int | bytes] = {}
     for key, value in fields.items():
         if key in {"relocate_sections", "extended_relocate_sections"}:
             continue
         if isinstance(value, bytes):
-            scalar_fields[key] = value
+            raw_fields[key] = value
+            text = _clean_decoded_text(decode_ebcdic(value))
+            scalar_fields[key] = text if text else value
         elif isinstance(value, int):
             scalar_fields[key] = value
+            raw_fields[key] = value
         else:
             raise TypeError(f"SMF field {key!r} has unsupported value {value!r}")
     return StructuredSMFRecord(
@@ -185,6 +186,7 @@ def _structured_record(
         fields=scalar_fields,
         sections=regular_sections,
         extended_sections=extended_sections,
+        raw_fields=raw_fields,
     )
 
 
@@ -200,7 +202,7 @@ def _clean_decoded_text(value: str) -> str:
         character if character in _PRINTABLE_TEXT else " " for character in value
     )
     text = " ".join(cleaned.strip().split())
-    if len(text) < 2 or text.isdigit():
+    if len(text) < 2:
         return ""
     return text
 
@@ -229,6 +231,29 @@ def _text_matches(
         if before_ok and after_ok:
             return True
         start = index + 1
+
+
+def _decoded_tokens(text: str, *, min_length: int, max_length: int) -> tuple[str, ...]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in text.upper():
+        if character in _TOKEN_CHARACTERS:
+            current.append(character)
+            continue
+        _append_decoded_token(tokens, current, min_length, max_length)
+    _append_decoded_token(tokens, current, min_length, max_length)
+    return tuple(tokens)
+
+
+def _append_decoded_token(
+    tokens: list[str], current: list[str], min_length: int, max_length: int
+) -> None:
+    if not current:
+        return
+    token = "".join(current)
+    current.clear()
+    if min_length <= len(token) <= max_length:
+        tokens.append(token)
 
 
 def _validate_structured_record(
