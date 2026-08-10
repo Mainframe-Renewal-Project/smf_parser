@@ -19,33 +19,34 @@ def generated_function_source(source: str, name: str) -> str:
 
 
 class SetupGenerationTests(unittest.TestCase):
-    def test_smf80_sections_use_self_defining_directory_parser(self) -> None:
+    def test_sections_use_header_derived_self_defining_parsers(self) -> None:
         generated = generated_setup_source()
 
-        self.assertIn("set_smf80_self_defining_sections", generated)
-        self.assertIn("discover_smf80_self_defining_sections", generated)
-        self.assertIn("section_list_has_entries", generated)
+        self.assertIn("append_self_defining_triplet_sections", generated)
+        self.assertIn("append_self_defining_section_directory", generated)
+        self.assertIn("_self_defining_triplet_parser_lines", generated)
+        self.assertIn("_self_defining_triplets", generated)
         self.assertIn('\\"relocate_sections\\"', generated)
         self.assertIn('\\"extended_relocate_sections\\"', generated)
         self.assertIn("section_offset = ", generated)
         self.assertIn("read_unsigned_be(data + entry_offset, 4);", generated)
-        self.assertIn("directory = 24", generated)
-        self.assertIn("PyList_Size(list) > 0", generated)
-        self.assertIn("list, directory, data + offset", generated)
+        self.assertIn("read_unsigned_be(data +", generated)
+        self.assertNotIn("discover_self_defining_sections", generated)
+        self.assertNotIn("for (directory = 24", generated)
+        self.assertNotIn("if 80 <= record_type <= 84:", generated)
         self.assertNotIn("static int set_smf80_relocate_sections", generated)
         self.assertNotIn("static int set_smf80_extended_relocate_sections", generated)
 
-    def test_smf80_discovery_collects_multiple_directory_entries(self) -> None:
+    def test_header_derived_triplets_append_all_occurrences(self) -> None:
         generated = generated_setup_source()
-        discovery = generated_function_source(
-            generated, "discover_smf80_self_defining_sections"
+        triplet_parser = generated_function_source(
+            generated, "append_self_defining_triplet_sections"
         )
 
-        self.assertIn("for (directory = 24", discovery)
-        self.assertIn("for (occurrence = 0; occurrence < section_count", discovery)
-        self.assertIn("append_section(", discovery)
-        self.assertNotIn("return set_smf80_self_defining_sections", discovery)
-        self.assertNotIn("dict, key, data, record_length, directory, 1", discovery)
+        self.assertIn("section_list(dict, key)", triplet_parser)
+        self.assertIn("for (occurrence = 0; occurrence < section_count", triplet_parser)
+        self.assertIn("append_section(", triplet_parser)
+        self.assertNotIn("PyList_New(0);", triplet_parser)
 
 
 if __name__ == "__main__":

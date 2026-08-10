@@ -276,23 +276,61 @@ def _generate_record_parser_source(
         "    return result;",
         "}",
         "",
-        "static int section_list_has_entries(PyObject *dict, const char *key) {",
+        "static PyObject *section_list(PyObject *dict, const char *key) {",
         "    PyObject *list = PyDict_GetItemString(dict, key);",
-        "    return list != NULL && PyList_Check(list) && PyList_Size(list) > 0;",
+        "    if (list != NULL) {",
+        "        if (!PyList_Check(list)) { return NULL; }",
+        "        return list;",
+        "    }",
+        "    list = PyList_New(0);",
+        "    if (list == NULL) { return NULL; }",
+        "    if (PyDict_SetItemString(dict, key, list) < 0) {",
+        "        Py_DECREF(list);",
+        "        return NULL;",
+        "    }",
+        "    Py_DECREF(list);",
+        "    return PyDict_GetItemString(dict, key);",
         "}",
         "",
-        "static int set_smf80_self_defining_sections(PyObject *dict, ",
+        "static int append_self_defining_triplet_sections(PyObject *dict, ",
+        "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
+        "unsigned long long data_type, unsigned long long section_offset, ",
+        "unsigned long long section_length, unsigned long long section_count) {",
+        "    PyObject *list;",
+        "    unsigned long long occurrence;",
+        "    if (section_offset == 0 || section_length == 0 || ",
+        "        section_count == 0) { return 0; }",
+        "    if (section_length > 4096 || section_count > 4096) { return 0; }",
+        "    if (section_offset > (unsigned long long)record_length) { return 0; }",
+        "    if (section_count > ",
+        "        ((unsigned long long)record_length - section_offset) / ",
+        "        section_length) {",
+        "        return 0;",
+        "    }",
+        "    list = section_list(dict, key);",
+        "    if (list == NULL) { return -1; }",
+        "    for (occurrence = 0; occurrence < section_count; occurrence++) {",
+        "        Py_ssize_t offset = ",
+        "            (Py_ssize_t)(section_offset + ",
+        "            (occurrence * section_length));",
+        "        if (append_section(",
+        "            list, data_type, data + offset,",
+        "            (Py_ssize_t)section_length, offset) < 0) {",
+        "            return -1;",
+        "        }",
+        "    }",
+        "    return 0;",
+        "}",
+        "",
+        "static int append_self_defining_section_directory(PyObject *dict, ",
         "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
         "unsigned long long directory, unsigned long long count) {",
-        "    PyObject *list;",
         "    unsigned long long index;",
         "    if (directory == 0 || count == 0) { return 0; }",
         "    if (directory > (unsigned long long)record_length) { return 0; }",
         "    if (count > ((unsigned long long)record_length - directory) / 8) {",
         "        return 0;",
         "    }",
-        "    list = PyList_New(0);",
-        "    if (list == NULL) { return -1; }",
         "    for (index = 0; index < count; index++) {",
         "        Py_ssize_t entry_offset = (Py_ssize_t)(directory + (index * 8));",
         "        unsigned long long section_offset = ",
@@ -301,82 +339,13 @@ def _generate_record_parser_source(
         "            read_unsigned_be(data + entry_offset + 4, 2);",
         "        unsigned long long section_count = ",
         "            read_unsigned_be(data + entry_offset + 6, 2);",
-        "        unsigned long long occurrence;",
-        "        if (section_length == 0 || section_count == 0) { continue; }",
-        "        if (section_offset > (unsigned long long)record_length) { continue; }",
-        "        if (section_count > ",
-        "            ((unsigned long long)record_length - section_offset) / ",
-        "            section_length) {",
-        "            continue;",
-        "        }",
-        "        for (occurrence = 0; occurrence < section_count; occurrence++) {",
-        "            Py_ssize_t offset = ",
-        "                (Py_ssize_t)(section_offset + ",
-        "                (occurrence * section_length));",
-        "            if (append_section(",
-        "                list, (unsigned long long)entry_offset, data + offset,",
-        "                (Py_ssize_t)section_length, offset) < 0) {",
-        "                Py_DECREF(list);",
-        "                return -1;",
-        "            }",
+        "        if (append_self_defining_triplet_sections(",
+        "            dict, key, data, record_length,",
+        "            (unsigned long long)entry_offset, section_offset,",
+        "            section_length, section_count) < 0) {",
+        "            return -1;",
         "        }",
         "    }",
-        "    if (PyDict_SetItemString(dict, key, list) < 0) {",
-        "        Py_DECREF(list);",
-        "        return -1;",
-        "    }",
-        "    Py_DECREF(list);",
-        "    return 0;",
-        "}",
-        "",
-        "static int discover_smf80_self_defining_sections(PyObject *dict, ",
-        "const char *key, const unsigned char *data, Py_ssize_t record_length) {",
-        "    unsigned long long directory;",
-        "    PyObject *list;",
-        "    if (section_list_has_entries(dict, key)) { return 0; }",
-        "    list = PyList_New(0);",
-        "    if (list == NULL) { return -1; }",
-        "    for (directory = 24; directory + 8 <= 280 && ",
-        "        directory + 8 <= (unsigned long long)record_length;",
-        "        directory += 4) {",
-        "        unsigned long long section_offset = ",
-        "            read_unsigned_be(data + directory, 4);",
-        "        unsigned long long section_length = ",
-        "            read_unsigned_be(data + directory + 4, 2);",
-        "        unsigned long long section_count = ",
-        "            read_unsigned_be(data + directory + 6, 2);",
-        "        unsigned long long occurrence;",
-        "        if (section_offset < 24 || section_length == 0 || ",
-        "            section_count == 0 || section_length > 4096 || ",
-        "            section_count > 4096) {",
-        "            continue;",
-        "        }",
-        "        if (section_offset > (unsigned long long)record_length) {",
-        "            continue;",
-        "        }",
-        "        if (section_count > ",
-        "            ((unsigned long long)record_length - section_offset) / ",
-        "            section_length) {",
-        "            continue;",
-        "        }",
-        "        for (occurrence = 0; occurrence < section_count; occurrence++) {",
-        "            Py_ssize_t offset = ",
-        "                (Py_ssize_t)(section_offset + ",
-        "                (occurrence * section_length));",
-        "            if (append_section(",
-        "                list, directory, data + offset,",
-        "                (Py_ssize_t)section_length, offset) < 0) {",
-        "                Py_DECREF(list);",
-        "                return -1;",
-        "            }",
-        "        }",
-        "    }",
-        "    if (PyList_Size(list) > 0 && ",
-        "        PyDict_SetItemString(dict, key, list) < 0) {",
-        "        Py_DECREF(list);",
-        "        return -1;",
-        "    }",
-        "    Py_DECREF(list);",
         "    return 0;",
         "}",
         "",
@@ -607,19 +576,77 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
                     "    }",
                 ]
             )
+    lines.extend(_self_defining_triplet_parser_lines(fields))
     if record_type == 80:
         lines.extend(_smf80_section_parser_lines(fields_by_name))
+    lines.extend(["    return result;", "}", ""])
+    return lines
+
+
+def _self_defining_triplet_parser_lines(
+    fields: tuple[dict[str, object], ...],
+) -> list[str]:
+    lines: list[str] = []
+    for offset_field, length_field, count_field in _self_defining_triplets(fields):
+        data_type = int(cast(int, offset_field["offset"]))
+        section_offset_field_offset = int(cast(int, offset_field["offset"]))
+        section_length_field_offset = int(cast(int, length_field["offset"]))
+        section_count_field_offset = int(cast(int, count_field["offset"]))
         lines.extend(
             [
-                "    if (discover_smf80_self_defining_sections(",
-                "        result, \"relocate_sections\", data, view->len) < 0) {",
+                "    if (append_self_defining_triplet_sections(",
+                "        result, \"relocate_sections\", data, view->len,",
+                f"        {data_type},",
+                f"        read_unsigned_be(data + {section_offset_field_offset}, 4),",
+                f"        read_unsigned_be(data + {section_length_field_offset}, 2),",
+                "        read_unsigned_be(data + "
+                f"{section_count_field_offset}, 2)) < 0) {{",
                 "        Py_DECREF(result);",
                 "        return NULL;",
                 "    }",
             ]
         )
-    lines.extend(["    return result;", "}", ""])
     return lines
+
+
+def _self_defining_triplets(
+    fields: tuple[dict[str, object], ...],
+) -> tuple[tuple[dict[str, object], dict[str, object], dict[str, object]], ...]:
+    fields_by_offset = {int(cast(int, field["offset"])): field for field in fields}
+    triplets: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
+    for field in fields:
+        offset = int(cast(int, field["offset"]))
+        if int(cast(int, field["size"])) != 4:
+            continue
+        length_field = fields_by_offset.get(offset + 4)
+        count_field = fields_by_offset.get(offset + 6)
+        if length_field is None or count_field is None:
+            continue
+        if int(cast(int, length_field["size"])) != 2:
+            continue
+        if int(cast(int, count_field["size"])) != 2:
+            continue
+        if not _looks_like_section_triplet(field, length_field, count_field):
+            continue
+        triplets.append((field, length_field, count_field))
+    return tuple(triplets)
+
+
+def _looks_like_section_triplet(
+    offset_field: dict[str, object],
+    length_field: dict[str, object],
+    count_field: dict[str, object],
+) -> bool:
+    return (
+        _field_name_contains(offset_field, ("off", "ofs", "rel", "rba"))
+        and _field_name_contains(length_field, ("len", "lng", "siz"))
+        and _field_name_contains(count_field, ("cnt", "ct", "num", "nbr"))
+    )
+
+
+def _field_name_contains(field: dict[str, object], tokens: tuple[str, ...]) -> bool:
+    name = str(field["name"]).lower()
+    return any(token in name for token in tokens)
 
 
 def _smf80_section_parser_lines(
@@ -633,7 +660,7 @@ def _smf80_section_parser_lines(
         )
         lines.extend(
             [
-                "    if (set_smf80_self_defining_sections(",
+                "    if (append_self_defining_section_directory(",
                 "        result, \"relocate_sections\", data, view->len,",
                 f"        read_unsigned_be(data + {relocate_offset}, 2),",
                 f"        read_unsigned_be(data + {relocate_count_offset}, 2)) < 0) {{",
@@ -649,7 +676,7 @@ def _smf80_section_parser_lines(
         )
         lines.extend(
             [
-                "    if (set_smf80_self_defining_sections(",
+                "    if (append_self_defining_section_directory(",
                 "        result, \"extended_relocate_sections\", data, view->len,",
                 f"        read_unsigned_be(data + {relocate_offset}, 2),",
                 f"        read_unsigned_be(data + {relocate_count_offset}, 2)) < 0) {{",
