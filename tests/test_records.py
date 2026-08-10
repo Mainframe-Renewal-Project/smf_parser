@@ -27,7 +27,7 @@ def native_type80_fields() -> dict[str, object]:
         "smf80rst": 12_345,
         "smf80rsd": b"\x00\x20\x23\x1f",
         "smf80uid": ebcdic("USERID  "),
-        "smf80mix": ebcdic("BH0910") + b"\x00\xff",
+        "smf80mix": ebcdic("USER123") + b"\x00\xff",
         "smf80ver": 8,
         "smf80re2": 9,
         "smf80vrm": ebcdic("7700"),
@@ -93,7 +93,7 @@ class StructuredRecordTests(unittest.TestCase):
         with patch.object(records, "_native", native):
             parsed = parse_record(standard_record(80))
 
-        self.assertEqual(parsed.clean_field_text("smf80mix"), "BH0910")
+        self.assertEqual(parsed.clean_field_text("smf80mix"), "USER123")
         self.assertEqual(parsed.decoded_fields()["smf80usr"], "SECADM1")
         decoded = parsed.decoded_texts()
         self.assertIn("JOBNAME", decoded)
@@ -111,8 +111,8 @@ class StructuredRecordTests(unittest.TestCase):
             parsed = parse_record(standard_record(80))
 
         self.assertEqual(
-            parsed.find_text("BH0910", token=True),
-            ("BH0910",),
+            parsed.find_text("USER123", token=True),
+            ("USER123",),
         )
         self.assertEqual(parsed.find_text("H091", token=True), ())
 
@@ -128,7 +128,7 @@ class StructuredRecordTests(unittest.TestCase):
 
         tokens = set(parsed.decoded_tokens())
 
-        self.assertIn("BH0910", tokens)
+        self.assertIn("USER123", tokens)
         self.assertIn("ALTUSER", tokens)
         self.assertIn("PERMIT", tokens)
 
