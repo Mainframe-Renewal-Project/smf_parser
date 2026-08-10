@@ -269,7 +269,7 @@ class DatasetReaderTests(unittest.TestCase):
             list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
 
     def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
-        calls: list[tuple[str, int, int, bool, frozenset[int] | None]] = []
+        calls: list[tuple[str, int, int, bool]] = []
 
         def read_vbs_dataset(
             dataset_name: str,
@@ -277,10 +277,12 @@ class DatasetReaderTests(unittest.TestCase):
             records: int,
             offset: int,
             tail: bool,
-            record_types: frozenset[int] | None,
         ) -> list[bytes]:
-            calls.append((dataset_name, records, offset, tail, record_types))
-            return [standard_record(2, system_id="DBRA")]
+            calls.append((dataset_name, records, offset, tail))
+            return [
+                standard_record(2, system_id="DBRA"),
+                standard_record(30, system_id="DBRA"),
+            ]
 
         fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
 
@@ -297,16 +299,14 @@ class DatasetReaderTests(unittest.TestCase):
                     records=10,
                     offset=3,
                     tail=True,
-                    header_catalog=header_catalog(2),
+                    header_catalog=header_catalog(2, 30),
                     system_ids={"DBRA"},
-                    record_types={2},
+                    record_types={30},
                 )
             )
 
-        self.assertEqual([record.record_type for record in parsed], [2])
-        self.assertEqual(
-            calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True, frozenset({2}))]
-        )
+        self.assertEqual([record.record_type for record in parsed], [30])
+        self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True)])
 
     def test_read_dataset_keeps_native_reader_call_shape_without_record_type_filter(
         self,

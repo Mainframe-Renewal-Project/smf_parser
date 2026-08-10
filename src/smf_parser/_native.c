@@ -225,90 +225,6 @@ static PyObject *parse_header(PyObject *self, PyObject *args) {
     return result;
 }
 
-static int smf_record_type_from_data(const unsigned char *data, Py_ssize_t length, uint16_t *record_type) {
-    uint16_t raw_length;
-    uint16_t declared_length;
-    unsigned char flags;
-    unsigned char record_type_indicator;
-
-    if (length < MIN_RECORD_LENGTH) {
-        return 0;
-    }
-
-    raw_length = read_u16_be(data);
-    declared_length = (raw_length & 0x8000) ? (uint16_t)(raw_length & 0x7FFF) : raw_length;
-    if (declared_length < MIN_RECORD_LENGTH || declared_length > MAX_RECORD_LENGTH) {
-        return 0;
-    }
-
-    flags = data[4];
-    record_type_indicator = data[5];
-    if (record_type_indicator == EXTENDED_RECORD_INDICATOR && (flags & EXTENDED_HEADER_FLAG) && length >= 56) {
-        uint16_t candidate_ext_length = read_u16_be(data + 24);
-        unsigned char candidate_version = data[26];
-        if ((candidate_version == 1 || candidate_version == 2) && (candidate_ext_length == 32 || candidate_ext_length == 68)) {
-            uint16_t candidate_header_length = (uint16_t)(STANDARD_HEADER_LENGTH + candidate_ext_length);
-            if (length >= candidate_header_length && declared_length >= candidate_header_length) {
-                *record_type = read_u16_be(data + 52);
-                return 1;
-            }
-        }
-    }
-
-    *record_type = record_type_indicator;
-    return 1;
-}
-
-static int build_record_type_filter(PyObject *record_types, unsigned char **filter) {
-    PyObject *iterator;
-    PyObject *item;
-
-    *filter = NULL;
-    if (record_types == NULL || record_types == Py_None) {
-        return 1;
-    }
-
-    *filter = (unsigned char *)calloc(65536, sizeof(unsigned char));
-    if (*filter == NULL) {
-        PyErr_NoMemory();
-        return 0;
-    }
-
-    iterator = PyObject_GetIter(record_types);
-    if (iterator == NULL) {
-        free(*filter);
-        *filter = NULL;
-        return 0;
-    }
-
-    while ((item = PyIter_Next(iterator)) != NULL) {
-        long record_type = PyLong_AsLong(item);
-        Py_DECREF(item);
-        if (record_type == -1 && PyErr_Occurred()) {
-            Py_DECREF(iterator);
-            free(*filter);
-            *filter = NULL;
-            return 0;
-        }
-        if (record_type < 0 || record_type > 65535) {
-            Py_DECREF(iterator);
-            free(*filter);
-            *filter = NULL;
-            PyErr_SetString(PyExc_ValueError, "SMF record type must be between 0 and 65535");
-            return 0;
-        }
-        (*filter)[record_type] = 1;
-    }
-
-    Py_DECREF(iterator);
-    if (PyErr_Occurred()) {
-        free(*filter);
-        *filter = NULL;
-        return 0;
-    }
-    return 1;
-}
-
 static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwargs) {
 #ifdef __MVS__
     static char *keywords[] = {"dataset_name", "records", "offset", "tail", "record_types", NULL};
@@ -318,8 +234,6 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
     int offset = 0;
     int tail = 0;
     PyObject *record_types = Py_None;
-    unsigned char *record_type_filter = NULL;
-    int use_record_type_filter = 0;
     char dataset_path[512];
     unsigned char buffer[VBS_MAX_LOGICAL_RECORD_LENGTH];
     int mode_index;
@@ -332,19 +246,14 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
         PyErr_SetString(PyExc_ValueError, "records and offset must be non-negative");
         return NULL;
     }
-    if (!build_record_type_filter(record_types, &record_type_filter)) {
-        return NULL;
-    }
-    use_record_type_filter = record_type_filter != NULL;
+    (void)record_types;
 
     if (strncmp(dataset_name, "//", 2) == 0 || strncmp(dataset_name, "DD:", 3) == 0 || dataset_name[0] == '/') {
         if (snprintf(dataset_path, sizeof(dataset_path), "%s", dataset_name) >= (int)sizeof(dataset_path)) {
-            free(record_type_filter);
             PyErr_SetString(PyExc_ValueError, "dataset name is too long");
             return NULL;
         }
     } else if (snprintf(dataset_path, sizeof(dataset_path), "//'%.500s'", dataset_name) >= (int)sizeof(dataset_path)) {
-        free(record_type_filter);
         PyErr_SetString(PyExc_ValueError, "dataset name is too long");
         return NULL;
     }
@@ -353,8 +262,6 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
         FILE *file = fopen(dataset_path, open_modes[mode_index]);
         PyObject *result;
         int skipped = 0;
-        int read_count = 0;
-        int saw_dataset_record = 0;
 
         if (file == NULL) {
             last_open_errno = errno;
@@ -364,7 +271,6 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
         result = PyList_New(0);
         if (result == NULL) {
             fclose(file);
-            free(record_type_filter);
             return NULL;
         }
 
@@ -379,46 +285,26 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
                 }
                 Py_DECREF(result);
                 fclose(file);
-                free(record_type_filter);
                 return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
             }
 
             if (skipped < offset) {
-                saw_dataset_record = 1;
                 skipped += 1;
                 continue;
             }
 
-            saw_dataset_record = 1;
-            if (use_record_type_filter) {
-                read_count += 1;
-                reached_record_limit = !tail && records > 0 && read_count >= records;
-            } else {
-                reached_record_limit = !tail && records > 0 && PyList_GET_SIZE(result) + 1 >= records;
-            }
-
-            if (use_record_type_filter) {
-                uint16_t record_type = 0;
-                if (smf_record_type_from_data(buffer, (Py_ssize_t)bytes_read, &record_type) && !record_type_filter[record_type]) {
-                    if (reached_record_limit) {
-                        break;
-                    }
-                    continue;
-                }
-            }
+            reached_record_limit = !tail && records > 0 && PyList_GET_SIZE(result) + 1 >= records;
 
             record = PyBytes_FromStringAndSize((const char *)buffer, (Py_ssize_t)bytes_read);
             if (record == NULL) {
                 Py_DECREF(result);
                 fclose(file);
-                free(record_type_filter);
                 return NULL;
             }
             if (PyList_Append(result, record) < 0) {
                 Py_DECREF(record);
                 Py_DECREF(result);
                 fclose(file);
-                free(record_type_filter);
                 return NULL;
             }
             Py_DECREF(record);
@@ -430,14 +316,12 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
 
         if (fclose(file) != 0) {
             Py_DECREF(result);
-            free(record_type_filter);
             return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
         }
 
         if (
             PyList_GET_SIZE(result) == 0 &&
-            open_modes[mode_index + 1] != NULL &&
-            (!use_record_type_filter || !saw_dataset_record)
+            open_modes[mode_index + 1] != NULL
         ) {
             Py_DECREF(result);
             continue;
@@ -447,20 +331,16 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
             Py_ssize_t length = PyList_GET_SIZE(result);
             PyObject *tail_records = PyList_GetSlice(result, length - records, length);
             Py_DECREF(result);
-            free(record_type_filter);
             return tail_records;
         }
-        free(record_type_filter);
         return result;
     }
 
     if (last_open_errno != 0) {
         errno = last_open_errno;
-        free(record_type_filter);
         return PyErr_SetFromErrnoWithFilename(PyExc_OSError, dataset_path);
     }
 
-    free(record_type_filter);
     return PyList_New(0);
 #else
     PyErr_SetString(PyExc_NotImplementedError, "VBS dataset reading is only available in native z/OS builds");

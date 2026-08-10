@@ -234,8 +234,6 @@ def _read_native_vbs_dataset_records(
         raise _unsupported_vbs_dataset_error(dataset_name, entries)
     resolved_dataset_name = _resolve_relative_gdg_name(dataset_name, entries)
     kwargs: dict[str, object] = {"records": records, "offset": offset, "tail": tail}
-    if record_types is not None:
-        kwargs["record_types"] = record_types
     return read_vbs_dataset(resolved_dataset_name, **kwargs)
 
 
