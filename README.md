@@ -45,6 +45,29 @@ catalog = HeaderCatalog.discover()
 print(catalog.for_record_type(92))
 ```
 
+Structured record parsing is exposed through the generic `parse_record()` API.
+It dispatches by SMF record type to generated native parsers built from the
+matching IBM C headers. Every supported structured record uses the same generated
+field-mapping path.
+
+```python
+from pysmf import parse_record, read_dataset
+
+for record in read_dataset("USER.SMF.UNLOAD(0)", record_types={80}):
+    structured = parse_record(record)
+    print(
+        structured.record_type,
+        structured["event_code"],
+        structured.field_text("user_id"),
+        structured.field_text("job_name"),
+    )
+```
+
+If a record type has compiled header admission support but no structured parser
+yet, `parse_record()` raises `HeaderCatalogError`. Additional parser generation
+coverage should plug into the same API rather than adding separate public entry
+points for each SMF family.
+
 On z/OS systems with ZOAU installed, SMF unloads can also be read directly from
 datasets. ZOAU is optional and is not declared as a package dependency because
 `zoautil_py` is not distributed on PyPI.

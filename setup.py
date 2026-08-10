@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +12,7 @@ from setuptools import Extension, setup
 from setuptools._distutils.ccompiler import CompileError, new_compiler
 from setuptools._distutils.sysconfig import customize_compiler
 from setuptools._distutils.util import get_platform
+from setuptools.command.build_ext import build_ext as build_ext_base
 from setuptools.command.build_py import build_py as build_py_base
 from wheel.bdist_wheel import bdist_wheel as bdist_wheel_base
 
@@ -18,6 +20,12 @@ DEFAULT_INCLUDE_DIR = Path("/usr/include/zos")
 DEFAULT_IBM_INCLUDE_DIR = Path("/usr/include/IBM")
 ROOT = Path(__file__).parent
 HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
+FIELD_RE = re.compile(
+    r"^\s*(?:unsigned\s+char|char|u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
+    r"\s+(?P<name>[A-Za-z_]\w*)"
+    r"(?:\[(?P<array>\d+)\])?"
+    r"(?:\s*:\s*(?P<bits>\d+))?\s*;"
+)
 
 
 class BuildPy(build_py_base):
@@ -51,6 +59,17 @@ class BdistWheel(bdist_wheel_base):
         if platform_tag == "any":
             platform_tag = get_platform().replace("-", "_").replace(".", "_")
         return python_tag, abi_tag, platform_tag
+
+
+class BuildExt(build_ext_base):
+    def build_extensions(self) -> None:
+        generated_source = _generate_record_parser_source(
+            Path(self.build_temp), _include_dirs()
+        )
+        for extension in self.extensions:
+            if extension.name == "pysmf._native":
+                extension.sources.append(str(generated_source))
+        super().build_extensions()
 
 
 def _include_dir() -> Path:
@@ -174,7 +193,218 @@ def _native_extension() -> Extension:
     )
 
 
+def _generate_record_parser_source(
+    build_temp: Path, include_dirs: tuple[Path, ...]
+) -> Path:
+    build_temp.mkdir(parents=True, exist_ok=True)
+    source = build_temp / "_generated_records.c"
+    records = _record_structs(include_dirs)
+
+    includes = tuple(dict.fromkeys(record["include"] for record in records))
+    lines = [
+        "#define PY_SSIZE_T_CLEAN",
+        "#include <Python.h>",
+        "#include <stdint.h>",
+        *(f"#include <{include}>" for include in includes),
+        "",
+        "static int set_long(PyObject *dict, const char *key, long long value) {",
+        "    PyObject *object = PyLong_FromLongLong(value);",
+        "    int result;",
+        "    if (object == NULL) { return -1; }",
+        "    result = PyDict_SetItemString(dict, key, object);",
+        "    Py_DECREF(object);",
+        "    return result;",
+        "}",
+        "",
+        "static int set_bytes(PyObject *dict, const char *key, "
+        "const unsigned char *data, Py_ssize_t length) {",
+        "    PyObject *object = PyBytes_FromStringAndSize((const char *)data, length);",
+        "    int result;",
+        "    if (object == NULL) { return -1; }",
+        "    result = PyDict_SetItemString(dict, key, object);",
+        "    Py_DECREF(object);",
+        "    return result;",
+        "}",
+        "",
+    ]
+
+    for record in records:
+        lines.extend(_record_parser_function(record))
+
+    lines.extend(
+        [
+            "PyObject *generated_parse_record(PyObject *self, PyObject *args) {",
+            "    int record_type;",
+            "    Py_buffer view;",
+            "    PyObject *result;",
+            "    if (!PyArg_ParseTuple(args, \"iy*\", &record_type, &view)) { "
+            "return NULL; }",
+            "    switch (record_type) {",
+            *(
+                f"    case {record['record_type']}: result = "
+                f"parse_{record['struct_name']}(&view); break;"
+                for record in records
+            ),
+            "    default:",
+            "        PyBuffer_Release(&view);",
+            "        PyErr_Format(PyExc_NotImplementedError, \"SMF type %d "
+            "does not yet have a generated structured parser\", record_type);",
+            "        return NULL;",
+            "    }",
+            "    PyBuffer_Release(&view);",
+            "    return result;",
+            "}",
+            "",
+        ]
+    )
+    source.write_text("\n".join(lines), encoding="utf-8")
+    return source
+
+
+def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    seen_record_types: set[int] = set()
+    for target in _header_targets():
+        resolved = _resolve_header(target, include_dirs)
+        if resolved is None:
+            continue
+        include_name, header_path = resolved
+        header_text = _read_header_text(header_path)
+        structs = _header_structs(header_text)
+        for record_type in target["record_types"]:
+            if record_type in seen_record_types:
+                continue
+            struct_name = _record_struct_name(int(record_type), structs)
+            if struct_name is None:
+                continue
+            fields = _record_struct_fields(structs[struct_name])
+            if not fields:
+                continue
+            records.append(
+                {
+                    "record_type": int(record_type),
+                    "struct_name": struct_name,
+                    "include": include_name,
+                    "fields": fields,
+                }
+            )
+            seen_record_types.add(int(record_type))
+    return records
+
+
+def _read_header_text(header_path: Path) -> str:
+    data = header_path.read_bytes()
+    for encoding in ("utf-8", "cp1047", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1", errors="ignore")
+
+
+def _header_structs(header_text: str) -> dict[str, str]:
+    structs: dict[str, str] = {}
+    position = 0
+    while True:
+        match = re.search(r"struct\s+([A-Za-z_]\w*)\s*\{", header_text[position:])
+        if match is None:
+            return structs
+        name = match.group(1)
+        start = position + match.end()
+        depth = 1
+        index = start
+        while index < len(header_text) and depth:
+            if header_text[index] == "{":
+                depth += 1
+            elif header_text[index] == "}":
+                depth -= 1
+            index += 1
+        if depth == 0:
+            structs[name] = header_text[start : index - 1]
+        position = index
+
+
+def _record_struct_name(record_type: int, structs: dict[str, str]) -> str | None:
+    candidates = (
+        f"smfrcd{record_type:02d}",
+        f"smfrcd{record_type}",
+        f"smf{record_type}",
+    )
+    for candidate in candidates:
+        if candidate in structs:
+            return candidate
+    return None
+
+
+def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
+    fields: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_line in body.splitlines():
+        line = raw_line.split("/*", maxsplit=1)[0].strip()
+        match = FIELD_RE.match(line)
+        if match is None:
+            continue
+        name = match.group("name")
+        array_length = int(match.group("array")) if match.group("array") else 0
+        if match.group("array") and array_length == 0:
+            continue
+        if name in seen or name.endswith(("_end_v1", "_end_v2", "_end_v3")):
+            continue
+        fields.append(
+            {
+                "name": name,
+                "array": array_length,
+                "bits": int(match.group("bits")) if match.group("bits") else 0,
+            }
+        )
+        seen.add(name)
+    return tuple(fields)
+
+
+def _record_parser_function(record: dict[str, object]) -> list[str]:
+    struct_name = str(record["struct_name"])
+    record_type = int(record["record_type"])
+    lines = [
+        f"static PyObject *parse_{struct_name}(Py_buffer *view) {{",
+        f"    const struct {struct_name} *record;",
+        "    PyObject *result;",
+        f"    if (view->len < (Py_ssize_t)sizeof(struct {struct_name})) {{",
+        f"        PyErr_SetString(PyExc_ValueError, \"SMF type {record_type} "
+        "record is shorter than its fixed C header structure\");",
+        "        return NULL;",
+        "    }",
+        f"    record = (const struct {struct_name} *)view->buf;",
+        "    result = PyDict_New();",
+        "    if (result == NULL) { return NULL; }",
+    ]
+    for field in record["fields"]:
+        field_name = str(field["name"])
+        if int(field["array"]):
+            lines.extend(
+                [
+                    f"    if (set_bytes(result, \"{field_name}\", "
+                    f"record->{field_name}, "
+                    f"(Py_ssize_t)sizeof(record->{field_name})) < 0) {{",
+                    "        Py_DECREF(result);",
+                    "        return NULL;",
+                    "    }",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"    if (set_long(result, \"{field_name}\", "
+                    f"(long long)record->{field_name}) < 0) {{",
+                    "        Py_DECREF(result);",
+                    "        return NULL;",
+                    "    }",
+                ]
+            )
+    lines.extend(["    return result;", "}", ""])
+    return lines
+
+
 setup(
-    cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel},
+    cmdclass={"build_ext": BuildExt, "build_py": BuildPy, "bdist_wheel": BdistWheel},
     ext_modules=[_native_extension()],
 )

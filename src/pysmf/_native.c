@@ -19,6 +19,8 @@
 #define EXTENDED_HEADER_FLAG 0x20
 #define VBS_MAX_LOGICAL_RECORD_LENGTH 32760
 
+PyObject *generated_parse_record(PyObject *self, PyObject *args);
+
 static uint16_t read_u16_be(const unsigned char *data) {
     return (uint16_t)(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
 }
@@ -383,6 +385,7 @@ static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwar
 
 static PyMethodDef methods[] = {
     {"parse_header", parse_header, METH_VARARGS, "Parse an SMF record header using the compiled z/OS C header build."},
+    {"parse_record", generated_parse_record, METH_VARARGS, "Parse fixed SMF record fields using generated IBM C header mappings."},
     {"decode_smf_time_hundredths", py_decode_smf_time_hundredths, METH_VARARGS, "Decode a 4-byte SMF time field."},
     {"is_packed_smf_date", py_is_packed_smf_date, METH_VARARGS, "Return whether a 4-byte field is a packed SMF date."},
     {"read_vbs_dataset", (PyCFunction)read_vbs_dataset, METH_VARARGS | METH_KEYWORDS, "Read logical records from a z/OS VBS dataset using native record I/O."},

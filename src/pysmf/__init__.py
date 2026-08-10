@@ -21,6 +21,7 @@ from .reader import (
     read_file,
     read_records,
 )
+from .records import SMFFieldSection, StructuredSMFRecord, parse_record
 
 __all__ = [
     "ExternalRDW",
@@ -28,15 +29,18 @@ __all__ = [
     "HeaderCatalogError",
     "HeaderDefinition",
     "SMFError",
+    "SMFFieldSection",
     "SMFHeader",
     "SMFParseError",
     "SMFRecord",
+    "StructuredSMFRecord",
     "TruncatedSMFRecordError",
     "ZOAUMissingError",
     "ZOAUUnsupportedDatasetError",
     "decode_ebcdic",
     "default_include_dir",
     "parse_header",
+    "parse_record",
     "read_dataset",
     "read_dataset_records",
     "read_file",
