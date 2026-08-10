@@ -16,3 +16,6 @@ Issues = "https://github.com/Mainframe-Renewal-Project/smf_parser/issues"
 # This is required for dynamic versioning to work
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "N"]

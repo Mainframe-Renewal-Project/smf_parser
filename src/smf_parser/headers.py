@@ -28,8 +28,12 @@ class HeaderCatalog:
 
     include_dir: Path
     headers: tuple[HeaderDefinition, ...]
-    _headers_by_name: Mapping[str, HeaderDefinition] = field(init=False, repr=False, compare=False)
-    _headers_by_record_type: Mapping[int, tuple[HeaderDefinition, ...]] = field(init=False, repr=False, compare=False)
+    _headers_by_name: Mapping[str, HeaderDefinition] = field(
+        init=False, repr=False, compare=False
+    )
+    _headers_by_record_type: Mapping[int, tuple[HeaderDefinition, ...]] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         headers_by_name: dict[str, HeaderDefinition] = {}
@@ -44,7 +48,10 @@ class HeaderCatalog:
             self,
             "_headers_by_record_type",
             MappingProxyType(
-                {record_type: tuple(headers) for record_type, headers in headers_by_record_type.items()}
+                {
+                    record_type: tuple(headers)
+                    for record_type, headers in headers_by_record_type.items()
+                }
             ),
         )
 
@@ -54,7 +61,8 @@ class HeaderCatalog:
         compiled_include_dir, definitions = _compiled_headers()
         if root != compiled_include_dir:
             raise HeaderCatalogError(
-                f"smf_parser was built against z/OS C headers in {compiled_include_dir}, not {root}"
+                "smf_parser was built against z/OS C headers in "
+                f"{compiled_include_dir}, not {root}"
             )
         if not definitions:
             raise HeaderCatalogError(f"no z/OS C headers found in {root}")

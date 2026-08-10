@@ -47,7 +47,9 @@ def standard_record(record_type: int, *, subtype: int = 0, body: bytes = b"") ->
     )
 
 
-def extended_v2_record(record_type: int, *, subtype: int = 0, body: bytes = b"") -> bytes:
+def extended_v2_record(
+    record_type: int, *, subtype: int = 0, body: bytes = b""
+) -> bytes:
     length = 92 + len(body)
     standard_header = struct.pack(
         ">HHBBi4s4s4sH",
@@ -82,7 +84,12 @@ def header_catalog(*record_types: int) -> HeaderCatalog:
     return HeaderCatalog(
         include_dir=include_dir,
         headers=(
-            HeaderDefinition(name="ifasmfr.h", path=include_dir / "ifasmfr.h", record_types=record_types, generic=False),
+            HeaderDefinition(
+                name="ifasmfr.h",
+                path=include_dir / "ifasmfr.h",
+                record_types=record_types,
+                generic=False,
+            ),
         ),
     )
 
@@ -193,7 +200,9 @@ class ReaderTests(unittest.TestCase):
         first = standard_record(2)
         second = standard_record(30, subtype=4, body=b"abc")
 
-        records = list(read_records(first + second, header_catalog=header_catalog(2, 30)))
+        records = list(
+            read_records(first + second, header_catalog=header_catalog(2, 30))
+        )
 
         self.assertEqual([record.record_type for record in records], [2, 30])
         self.assertEqual(records[1].body, b"abc")
@@ -230,18 +239,28 @@ class HeaderCatalogTests(unittest.TestCase):
             record_types=(92,),
             generic=False,
         )
-        with patch("smf_parser.headers._compiled_headers", return_value=(include_dir, (definition,))):
+        with patch(
+            "smf_parser.headers._compiled_headers",
+            return_value=(include_dir, (definition,)),
+        ):
             catalog = HeaderCatalog.discover(include_dir)
 
         self.assertIsNotNone(catalog.by_name("ifasmfh"))
-        self.assertTrue(any(header.name == "ifasmfh.h" for header in catalog.for_record_type(92)))
+        self.assertTrue(
+            any(header.name == "ifasmfh.h" for header in catalog.for_record_type(92))
+        )
 
     def test_finds_ibm_uppercase_extensionless_headers_by_logical_name(self) -> None:
         include_dir = Path("/usr/include/IBM")
         catalog = HeaderCatalog(
             include_dir=include_dir,
             headers=(
-                HeaderDefinition(name="ifasmfr.h", path=include_dir / "IFASMFR", record_types=(), generic=True),
+                HeaderDefinition(
+                    name="ifasmfr.h",
+                    path=include_dir / "IFASMFR",
+                    record_types=(),
+                    generic=True,
+                ),
             ),
         )
 
@@ -254,13 +273,25 @@ class HeaderCatalogTests(unittest.TestCase):
         catalog = HeaderCatalog(
             include_dir=include_dir,
             headers=(
-                HeaderDefinition(name="ifasmfh.h", path=include_dir / "ifasmfh.h", record_types=(), generic=True),
-                HeaderDefinition(name="ifasmfr1.h", path=include_dir / "ifasmfr1.h", record_types=(1,), generic=False),
+                HeaderDefinition(
+                    name="ifasmfh.h",
+                    path=include_dir / "ifasmfh.h",
+                    record_types=(),
+                    generic=True,
+                ),
+                HeaderDefinition(
+                    name="ifasmfr1.h",
+                    path=include_dir / "ifasmfr1.h",
+                    record_types=(1,),
+                    generic=False,
+                ),
             ),
         )
 
         self.assertEqual(catalog.for_record_type(0), ())
-        self.assertEqual(tuple(header.name for header in catalog.for_record_type(1)), ("ifasmfr1.h",))
+        self.assertEqual(
+            tuple(header.name for header in catalog.for_record_type(1)), ("ifasmfr1.h",)
+        )
 
 
 if __name__ == "__main__":

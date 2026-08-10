@@ -20,13 +20,15 @@ ROOT = Path(__file__).parent
 HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
 
 
-class build_py(build_py_base):
+class BuildPy(build_py_base):
     def run(self) -> None:
         compiled_headers = _compile_headers(_include_dir())
         super().run()
         self._write_compiled_header_manifest(compiled_headers)
 
-    def _write_compiled_header_manifest(self, compiled_headers: list[dict[str, object]]) -> None:
+    def _write_compiled_header_manifest(
+        self, compiled_headers: list[dict[str, object]]
+    ) -> None:
         package_dir = Path(self.build_lib, "smf_parser")
         package_dir.mkdir(parents=True, exist_ok=True)
         manifest = package_dir / "_compiled_headers.py"
@@ -39,7 +41,7 @@ class build_py(build_py_base):
         )
 
 
-class bdist_wheel(bdist_wheel_base):
+class BdistWheel(bdist_wheel_base):
     def finalize_options(self) -> None:
         super().finalize_options()
         self.root_is_pure = False
@@ -66,7 +68,11 @@ def _include_dirs() -> tuple[Path, ...]:
     include_dir = _include_dir()
     include_dirs = [include_dir]
     configured_ibm_include = environ.get("SMF_PARSER_IBM_INCLUDE")
-    ibm_include_dir = Path(configured_ibm_include) if configured_ibm_include else include_dir.parent / "IBM"
+    ibm_include_dir = (
+        Path(configured_ibm_include)
+        if configured_ibm_include
+        else include_dir.parent / "IBM"
+    )
     if ibm_include_dir != include_dir:
         include_dirs.append(ibm_include_dir)
     include_root = include_dir.parent
@@ -94,7 +100,10 @@ def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
                 continue
             include_name, header_path = resolved
             source = source_dir / f"compile_{header_path.stem.lower()}.c"
-            source.write_text(f"#include <{include_name}>\nint main(void) {{ return 0; }}\n", encoding="utf-8")
+            source.write_text(
+                f"#include <{include_name}>\nint main(void) {{ return 0; }}\n",
+                encoding="utf-8",
+            )
             try:
                 compiler.compile(
                     [str(source)],
@@ -122,7 +131,9 @@ def _compile_headers(include_dir: Path) -> list[dict[str, object]]:
     return compiled
 
 
-def _resolve_header(target: dict[str, Any], include_dirs: tuple[Path, ...]) -> tuple[str, Path] | None:
+def _resolve_header(
+    target: dict[str, Any], include_dirs: tuple[Path, ...]
+) -> tuple[str, Path] | None:
     for header_name in _header_name_candidates(target):
         for include_dir in include_dirs:
             header_path = include_dir / header_name
@@ -132,7 +143,10 @@ def _resolve_header(target: dict[str, Any], include_dirs: tuple[Path, ...]) -> t
 
 
 def _header_name_candidates(target: dict[str, Any]) -> tuple[str, ...]:
-    header_names = (str(target["name"]), *(str(name) for name in target.get("alternate_names", ())))
+    header_names = (
+        str(target["name"]),
+        *(str(name) for name in target.get("alternate_names", ())),
+    )
     candidates: list[str] = []
     for header_name in header_names:
         path = Path(header_name)
@@ -168,7 +182,7 @@ def _public_api_package_dir() -> str:
 
 
 setup(
-    cmdclass={"build_py": build_py, "bdist_wheel": bdist_wheel},
+    cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel},
     ext_modules=[_native_extension()],
     package_dir={"pysmf": _public_api_package_dir(), "smf_parser": "src/smf_parser"},
     packages=["pysmf", "smf_parser"],

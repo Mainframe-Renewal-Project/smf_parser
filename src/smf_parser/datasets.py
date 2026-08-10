@@ -75,7 +75,9 @@ def read_dataset(
         )
         return
     else:
-        dataset_records = datasets.read_as_bytes(dataset_name, records=records, offset=offset, tail=tail)
+        dataset_records = datasets.read_as_bytes(
+            dataset_name, records=records, offset=offset, tail=tail
+        )
     yield from read_dataset_records(
         dataset_records,
         record_format=record_format,
@@ -138,13 +140,17 @@ def read_dataset_records(
         logical_offset += len(data)
 
 
-def _normalized_record_types(record_types: Collection[int] | None) -> frozenset[int] | None:
+def _normalized_record_types(
+    record_types: Collection[int] | None,
+) -> frozenset[int] | None:
     if record_types is None:
         return None
     normalized = frozenset(record_types)
     for record_type in normalized:
         if not 0 <= record_type <= 65535:
-            raise ValueError(f"SMF record type must be between 0 and 65535: {record_type!r}")
+            raise ValueError(
+                f"SMF record type must be between 0 and 65535: {record_type!r}"
+            )
     return normalized
 
 
@@ -187,7 +193,8 @@ def _zoau_gdg_generations(base: str):
         gdgs = import_module("zoautil_py.gdgs")
     except ImportError as error:
         raise ZOAUMissingError(
-            "ZOAU gdgs support is required to resolve relative GDG names. Ensure zoautil_py.gdgs is importable."
+            "ZOAU gdgs support is required to resolve relative GDG names. "
+            "Ensure zoautil_py.gdgs is importable."
         ) from error
 
     generation_data_group_view = gdgs.GenerationDataGroupView
@@ -300,7 +307,9 @@ def _vbs_block_segments(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
             _VBS_SEGMENT_MIDDLE,
         }:
             return None
-        segments.append((segment_control, bytes(chunk[offset + 4 : offset + segment_length])))
+        segments.append(
+            (segment_control, bytes(chunk[offset + 4 : offset + segment_length]))
+        )
         offset += segment_length
     return tuple(segments)
 
@@ -329,16 +338,23 @@ def _sorted_gdg_generation_names(base: str, entries) -> tuple[str, ...]:
         sorted(
             str(name)
             for entry in entries
-            if (name := getattr(entry, "name", None)) is not None and str(name).startswith(f"{base}.")
+            if (name := getattr(entry, "name", None)) is not None
+            and str(name).startswith(f"{base}.")
         )
     )
 
 
-def _unsupported_vbs_dataset_error(dataset_name: str, entries) -> ZOAUUnsupportedDatasetError:
-    names = ", ".join(str(getattr(entry, "name", "<unknown>")) for entry in entries[-3:])
+def _unsupported_vbs_dataset_error(
+    dataset_name: str, entries
+) -> ZOAUUnsupportedDatasetError:
+    names = ", ".join(
+        str(getattr(entry, "name", "<unknown>")) for entry in entries[-3:]
+    )
     return ZOAUUnsupportedDatasetError(
-        f"ZOAU reports {dataset_name} as RECFM=VBS ({names}); read_as_bytes() exposes spanned segments, "
-        "not complete SMF logical records. A z/OS VBS record reconstruction path is required before parsing."
+        f"ZOAU reports {dataset_name} as RECFM=VBS ({names}); "
+        "read_as_bytes() exposes spanned segments, not complete SMF logical "
+        "records. A z/OS VBS record reconstruction path is required before "
+        "parsing."
     )
 
 
@@ -370,20 +386,30 @@ def _read_smf_dataset_records(
     logical_offset = 0
     buffer = bytearray()
     buffer_offset = 0
-    skip_invalid = skip_short_records if skip_invalid_records is None else skip_invalid_records
+    skip_invalid = (
+        skip_short_records if skip_invalid_records is None else skip_invalid_records
+    )
 
     for data in records:
         if skip_short_records and not buffer and len(data) < _MIN_SMF_RECORD_LENGTH:
             logical_offset += len(data)
             continue
 
-        selected_format = _detect_dataset_record_format(data) if record_format == "auto" else "smf"
+        selected_format = (
+            _detect_dataset_record_format(data) if record_format == "auto" else "smf"
+        )
         if not buffer and selected_format == "rdw":
-            yield from _read_one_rdw_dataset_record(data, logical_offset=logical_offset, header_catalog=header_catalog)
+            yield from _read_one_rdw_dataset_record(
+                data, logical_offset=logical_offset, header_catalog=header_catalog
+            )
             logical_offset += len(data)
             continue
 
-        if split_on_record_start and buffer and _looks_like_smf_record_start(data, system_ids=system_ids):
+        if (
+            split_on_record_start
+            and buffer
+            and _looks_like_smf_record_start(data, system_ids=system_ids)
+        ):
             if not skip_invalid:
                 parse_header(bytes(buffer), offset=buffer_offset)
             buffer.clear()
@@ -461,7 +487,10 @@ def _drain_smf_buffer(
         if not header_definitions or not header_is_plausible:
             if not skip_invalid_records:
                 if not header_definitions:
-                    raise HeaderCatalogError(f"no z/OS C header definition found for SMF record type {header.record_type}")
+                    raise HeaderCatalogError(
+                        "no z/OS C header definition found for SMF record "
+                        f"type {header.record_type}"
+                    )
                 parse_header(data, offset=header_offset)
             if not header_is_plausible:
                 del buffer[:]
@@ -482,7 +511,9 @@ def _drain_smf_buffer(
         consumed += record_length
 
 
-def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] | None) -> bool:
+def _is_plausible_smf_header(
+    header: SMFHeader, *, system_ids: Collection[str] | None
+) -> bool:
     if not 0 <= header.time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
         return False
     if header.subtype is not None and header.subtype > _MAX_PLAUSIBLE_SUBTYPE:
@@ -498,10 +529,14 @@ def _is_plausible_smf_header(header: SMFHeader, *, system_ids: Collection[str] |
         return False
     if system_ids is not None and header.system_id_text not in system_ids:
         return False
-    return header.subsystem_id is None or _is_plausible_identifier(header.subsystem_id, allow_blank=True)
+    return header.subsystem_id is None or _is_plausible_identifier(
+        header.subsystem_id, allow_blank=True
+    )
 
 
-def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | None) -> bool:
+def _looks_like_smf_record_start(
+    data: bytes, *, system_ids: Collection[str] | None
+) -> bool:
     if len(data) < _MIN_SMF_RECORD_LENGTH:
         return False
 
@@ -511,7 +546,9 @@ def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | N
     if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
         return False
 
-    date_first_header = not is_packed_smf_date(data[10:14]) and is_packed_smf_date(data[6:10])
+    date_first_header = not is_packed_smf_date(data[10:14]) and is_packed_smf_date(
+        data[6:10]
+    )
     time_hundredths = 0 if date_first_header else decode_smf_time_hundredths(data[6:10])
     if not 0 <= time_hundredths <= _MAX_SMF_TIME_HUNDREDTHS:
         return False
@@ -531,7 +568,10 @@ def _looks_like_smf_record_start(data: bytes, *, system_ids: Collection[str] | N
     if system_ids is not None and decode_ebcdic(system_id) not in system_ids:
         return False
     minimum_subsystem_length = 18 if date_first_header else 22
-    return len(data) < minimum_subsystem_length or _is_plausible_identifier(subsystem_id, allow_blank=True)
+    return len(data) < minimum_subsystem_length or _is_plausible_identifier(
+        subsystem_id, allow_blank=True
+    )
+
 
 def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatalog:
     catalog = HeaderCatalog.discover() if header_catalog is None else header_catalog
@@ -568,14 +608,19 @@ def _read_one_rdw_dataset_record(
     header_catalog: HeaderCatalog,
     record_types: frozenset[int] | None = None,
 ) -> Iterator[SMFRecord]:
-    for record in read_records(data, record_format="rdw", header_catalog=header_catalog):
+    for record in read_records(
+        data, record_format="rdw", header_catalog=header_catalog
+    ):
         if record_types is not None and record.record_type not in record_types:
             continue
         yield SMFRecord(
             data=record.data,
             header=record.header,
             offset=logical_offset + record.offset,
-            rdw=ExternalRDW(length=record.rdw.length, segment_descriptor=record.rdw.segment_descriptor)
+            rdw=ExternalRDW(
+                length=record.rdw.length,
+                segment_descriptor=record.rdw.segment_descriptor,
+            )
             if record.rdw is not None
             else None,
             header_definitions=record.header_definitions,

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from smf_parser import (
     HeaderCatalog,
     HeaderDefinition,
-    TruncatedSMFRecord,
+    TruncatedSMFRecordError,
     ZOAUMissingError,
     ZOAUUnsupportedDatasetError,
     read_dataset,
@@ -55,7 +55,10 @@ def standard_record(
 
 
 def vbs_block(*segments: tuple[int, bytes], trailing: bytes = b"") -> bytes:
-    encoded_segments = b"".join(struct.pack(">HBB", len(data) + 4, control, 0) + data for control, data in segments)
+    encoded_segments = b"".join(
+        struct.pack(">HBB", len(data) + 4, control, 0) + data
+        for control, data in segments
+    )
     block = struct.pack(">HH", len(encoded_segments) + 4, 0) + encoded_segments
     return block + trailing
 
@@ -115,14 +118,23 @@ def header_catalog(*record_types: int) -> HeaderCatalog:
     return HeaderCatalog(
         include_dir=include_dir,
         headers=(
-            HeaderDefinition(name="ifasmfr.h", path=include_dir / "ifasmfr.h", record_types=record_types, generic=False),
+            HeaderDefinition(
+                name="ifasmfr.h",
+                path=include_dir / "ifasmfr.h",
+                record_types=record_types,
+                generic=False,
+            ),
         ),
     )
 
 
 class DatasetReaderTests(unittest.TestCase):
     def test_reads_dataset_records_that_are_smf_records(self) -> None:
-        records = list(read_dataset_records([standard_record(30, subtype=2)], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records(
+                [standard_record(30, subtype=2)], header_catalog=header_catalog(30)
+            )
+        )
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -133,7 +145,12 @@ class DatasetReaderTests(unittest.TestCase):
     def test_reassembles_continuation_dataset_chunks_by_default(self) -> None:
         smf_record = standard_record(30, subtype=2, body=b"a" * 2000)
 
-        records = list(read_dataset_records([smf_record[:1408], smf_record[1408:]], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records(
+                [smf_record[:1408], smf_record[1408:]],
+                header_catalog=header_catalog(30),
+            )
+        )
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
@@ -144,7 +161,9 @@ class DatasetReaderTests(unittest.TestCase):
         first = standard_record(30, subtype=2, body=b"a" * 2000)[:1408]
         second = standard_record(30, subtype=3, body=b"b" * 2000)[:896]
 
-        records = list(read_dataset_records([first, second], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records([first, second], header_catalog=header_catalog(30))
+        )
 
         self.assertEqual(records, [])
 
@@ -160,14 +179,24 @@ class DatasetReaderTests(unittest.TestCase):
     def test_does_not_resynchronize_after_false_record_candidates(self) -> None:
         valid = standard_record(30, subtype=2)
 
-        records = list(read_dataset_records([false_record_candidate() + valid], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records(
+                [false_record_candidate() + valid], header_catalog=header_catalog(30)
+            )
+        )
 
         self.assertEqual(records, [])
 
-    def test_does_not_resynchronize_after_candidates_without_compiled_record_header(self) -> None:
+    def test_does_not_resynchronize_after_candidates_without_compiled_record_header(
+        self,
+    ) -> None:
         valid = standard_record(30, subtype=2)
 
-        records = list(read_dataset_records([false_type_0_candidate() + valid], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records(
+                [false_type_0_candidate() + valid], header_catalog=header_catalog(30)
+            )
+        )
 
         self.assertEqual(records, [])
 
@@ -175,7 +204,9 @@ class DatasetReaderTests(unittest.TestCase):
         false = unsupported_record_with_embedded_supported_candidate()
         valid = standard_record(30, subtype=2)
 
-        records = list(read_dataset_records([false + valid], header_catalog=header_catalog(1, 30)))
+        records = list(
+            read_dataset_records([false + valid], header_catalog=header_catalog(1, 30))
+        )
 
         self.assertEqual(records, [])
 
@@ -203,14 +234,20 @@ class DatasetReaderTests(unittest.TestCase):
         false = standard_record(1, subtype=50372, system_id="SYS2", body=b"payload")
         valid = standard_record(30, subtype=2, system_id="DBRA")
 
-        records = list(read_dataset_records([false + valid], header_catalog=header_catalog(30), system_ids={"DBRA"}))
+        records = list(
+            read_dataset_records(
+                [false + valid], header_catalog=header_catalog(30), system_ids={"DBRA"}
+            )
+        )
 
         self.assertEqual(records, [])
 
     def test_skips_records_with_non_packed_decimal_smf_date(self) -> None:
         record = standard_record(30, subtype=2, date=ebcdic("BAD "))
 
-        records = list(read_dataset_records([record], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records([record], header_catalog=header_catalog(30))
+        )
 
         self.assertEqual(records, [])
 
@@ -218,7 +255,9 @@ class DatasetReaderTests(unittest.TestCase):
         smf_record = standard_record(14, body=b"payload")
         dataset_record = struct.pack(">HH", len(smf_record) + 4, 0) + smf_record
 
-        records = list(read_dataset_records([dataset_record], header_catalog=header_catalog(14)))
+        records = list(
+            read_dataset_records([dataset_record], header_catalog=header_catalog(14))
+        )
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 14)
@@ -227,20 +266,32 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].offset, 4)
 
     def test_skips_short_dataset_records_by_default(self) -> None:
-        records = list(read_dataset_records([b"\0\0\0\0", standard_record(30)], header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records(
+                [b"\0\0\0\0", standard_record(30)], header_catalog=header_catalog(30)
+            )
+        )
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 30)
         self.assertEqual(records[0].offset, 4)
 
     def test_can_fail_on_short_dataset_records(self) -> None:
-        with self.assertRaises(TruncatedSMFRecord):
-            list(read_dataset_records([b"\0\0\0\0"], skip_short_records=False, header_catalog=header_catalog(30)))
+        with self.assertRaises(TruncatedSMFRecordError):
+            list(
+                read_dataset_records(
+                    [b"\0\0\0\0"],
+                    skip_short_records=False,
+                    header_catalog=header_catalog(30),
+                )
+            )
 
     def test_read_dataset_uses_zoau_read_as_bytes_lazily(self) -> None:
         calls: list[tuple[str, int, int, bool]] = []
 
-        def read_as_bytes(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
+        def read_as_bytes(
+            dataset_name: str, *, records: int, offset: int, tail: bool
+        ) -> list[bytes]:
             calls.append((dataset_name, records, offset, tail))
             return [standard_record(2, system_id="DBRA")]
 
@@ -264,11 +315,15 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_rejects_zoau_vbs_datasets(self) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
 
@@ -280,7 +335,10 @@ class DatasetReaderTests(unittest.TestCase):
             raise ImportError(name)
 
         with (
-            patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect),
+            patch(
+                "smf_parser.datasets.import_module",
+                side_effect=import_module_side_effect,
+            ),
             self.assertRaises(ZOAUUnsupportedDatasetError),
         ):
             list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
@@ -289,7 +347,9 @@ class DatasetReaderTests(unittest.TestCase):
         calls: list[tuple[str, int, int, bool, frozenset[int] | None]] = []
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
@@ -323,7 +383,9 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
             parsed = list(
                 read_dataset(
                     "USER.SMF.UNLOAD(-1)",
@@ -337,21 +399,31 @@ class DatasetReaderTests(unittest.TestCase):
             )
 
         self.assertEqual([record.record_type for record in parsed], [2])
-        self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True, frozenset({2}))])
+        self.assertEqual(
+            calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True, frozenset({2}))]
+        )
 
-    def test_read_dataset_keeps_native_reader_call_shape_without_record_type_filter(self) -> None:
+    def test_read_dataset_keeps_native_reader_call_shape_without_record_type_filter(
+        self,
+    ) -> None:
         calls: list[tuple[str, int, int, bool]] = []
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
 
-        def read_vbs_dataset(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
+        def read_vbs_dataset(
+            dataset_name: str, *, records: int, offset: int, tail: bool
+        ) -> list[bytes]:
             calls.append((dataset_name, records, offset, tail))
             return [standard_record(2, system_id="DBRA")]
 
@@ -366,51 +438,41 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", records=10, offset=3, tail=True, header_catalog=header_catalog(2)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)",
+                    records=10,
+                    offset=3,
+                    tail=True,
+                    header_catalog=header_catalog(2),
+                )
+            )
 
         self.assertEqual([record.record_type for record in parsed], [2])
         self.assertEqual(calls, [("USER.SMF.UNLOAD.G0001V00", 10, 3, True)])
 
-    def test_read_dataset_parses_multiple_smf_records_from_one_native_vbs_chunk(self) -> None:
+    def test_read_dataset_parses_multiple_smf_records_from_one_native_vbs_chunk(
+        self,
+    ) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
-            )
-        )
-        fake_native = SimpleNamespace(read_vbs_dataset=lambda *args, **kwargs: [standard_record(2) + standard_record(30)])
-
-        def import_module_side_effect(name: str):
-            if name == "zoautil_py.datasets":
-                return fake_datasets
-            if name == "zoautil_py.gdgs":
-                return fake_gdgs
-            if name == "smf_parser._native":
-                return fake_native
-            raise ImportError(name)
-
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)))
-
-        self.assertEqual([record.record_type for record in parsed], [2, 30])
-
-    def test_read_dataset_reconstructs_complete_records_from_native_vbs_block(self) -> None:
-        fake_datasets = SimpleNamespace(
-            list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
-        )
-        fake_gdgs = SimpleNamespace(
-            GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         fake_native = SimpleNamespace(
             read_vbs_dataset=lambda *args, **kwargs: [
-                vbs_block((0x00, standard_record(2)), (0x00, standard_record(30)), trailing=b"\0" * 16)
+                standard_record(2) + standard_record(30)
             ]
         )
 
@@ -423,19 +485,77 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)
+                )
+            )
 
         self.assertEqual([record.record_type for record in parsed], [2, 30])
 
-    def test_read_dataset_reconstructs_spanned_record_from_native_vbs_blocks(self) -> None:
+    def test_read_dataset_reconstructs_complete_records_from_native_vbs_block(
+        self,
+    ) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
+            )
+        )
+        fake_native = SimpleNamespace(
+            read_vbs_dataset=lambda *args, **kwargs: [
+                vbs_block(
+                    (0x00, standard_record(2)),
+                    (0x00, standard_record(30)),
+                    trailing=b"\0" * 16,
+                )
+            ]
+        )
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "zoautil_py.gdgs":
+                return fake_gdgs
+            if name == "smf_parser._native":
+                return fake_native
+            raise ImportError(name)
+
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)
+                )
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [2, 30])
+
+    def test_read_dataset_reconstructs_spanned_record_from_native_vbs_blocks(
+        self,
+    ) -> None:
+        fake_datasets = SimpleNamespace(
+            list_datasets=lambda pattern: [],
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
+        )
+        fake_gdgs = SimpleNamespace(
+            GenerationDataGroupView=lambda base: SimpleNamespace(
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         record = standard_record(30, body=b"payload" * 100)
@@ -455,8 +575,12 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+            )
 
         self.assertEqual([record.record_type for record in parsed], [30])
         self.assertEqual(parsed[0].data, record)
@@ -472,21 +596,30 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual([record.record_type for record in records], [30, 80])
 
-    def test_read_dataset_does_not_concatenate_incomplete_native_vbs_chunks(self) -> None:
+    def test_read_dataset_does_not_concatenate_incomplete_native_vbs_chunks(
+        self,
+    ) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         incomplete = standard_record(2, system_id="DBRA", body=b"payload" * 20)[:31]
         complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
+                incomplete,
+                complete,
+            ],
         )
 
         def import_module_side_effect(name: str):
@@ -498,26 +631,39 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+            )
 
         self.assertEqual([record.record_type for record in parsed], [30])
 
-    def test_read_dataset_does_not_concatenate_new_native_vbs_record_starts(self) -> None:
+    def test_read_dataset_does_not_concatenate_new_native_vbs_record_starts(
+        self,
+    ) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         incomplete = standard_record(2, system_id="DBRA", body=b"a" * 2000)[:1408]
         complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
+                incomplete,
+                complete,
+            ],
         )
 
         def import_module_side_effect(name: str):
@@ -529,26 +675,36 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+            )
 
         self.assertEqual([record.record_type for record in parsed], [30])
 
     def test_read_dataset_does_not_scan_trailing_native_vbs_bytes(self) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         record = standard_record(2, system_id="DBRA", body=b"first")
         trailing_payload = b"not an SMF record"
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record + trailing_payload],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
+                record + trailing_payload
+            ],
         )
 
         def import_module_side_effect(name: str):
@@ -560,26 +716,39 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+            )
 
         self.assertEqual([record.record_type for record in parsed], [2])
 
-    def test_read_dataset_skips_native_vbs_records_without_compiled_headers(self) -> None:
+    def test_read_dataset_skips_native_vbs_records_without_compiled_headers(
+        self,
+    ) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         unsupported_record = standard_record(102, system_id="DBRA", body=b"unsupported")
         supported_record = standard_record(2, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [unsupported_record, supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
+                unsupported_record,
+                supported_record,
+            ],
         )
 
         def import_module_side_effect(name: str):
@@ -591,26 +760,40 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2))
+            )
 
         self.assertEqual([record.record_type for record in parsed], [2])
 
-    def test_read_dataset_does_not_resync_inside_implausible_native_vbs_chunk(self) -> None:
+    def test_read_dataset_does_not_resync_inside_implausible_native_vbs_chunk(
+        self,
+    ) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
-        implausible_record = standard_record(2, system_id="DBRA", date=ebcdic("BAD "), body=b"implausible")
+        implausible_record = standard_record(
+            2, system_id="DBRA", date=ebcdic("BAD "), body=b"implausible"
+        )
         supported_record = standard_record(30, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [implausible_record + supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
+                implausible_record + supported_record
+            ],
         )
 
         def import_module_side_effect(name: str):
@@ -622,19 +805,27 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+            )
 
         self.assertEqual(parsed, [])
 
     def test_read_dataset_accepts_date_first_native_vbs_header(self) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         record = struct.pack(
@@ -662,8 +853,12 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(102)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(102))
+            )
 
         self.assertEqual([record.record_type for record in parsed], [102])
         self.assertEqual(parsed[0].header.date, b"\x01\x26\x21\x9f")
@@ -672,11 +867,15 @@ class DatasetReaderTests(unittest.TestCase):
     def test_read_dataset_rejects_date_first_text_as_subtype(self) -> None:
         fake_datasets = SimpleNamespace(
             list_datasets=lambda pattern: [],
-            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+            read_as_bytes=lambda *args, **kwargs: self.fail(
+                "read_as_bytes should not be called for VBS datasets"
+            ),
         )
         fake_gdgs = SimpleNamespace(
             GenerationDataGroupView=lambda base: SimpleNamespace(
-                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+                generations=[
+                    SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")
+                ]
             )
         )
         false_record = struct.pack(
@@ -693,7 +892,10 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(30, system_id="SYS1", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [false_record, supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [
+                false_record,
+                supported_record,
+            ],
         )
 
         def import_module_side_effect(name: str):
@@ -705,14 +907,22 @@ class DatasetReaderTests(unittest.TestCase):
                 return fake_native
             raise ImportError(name)
 
-        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
-            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(30, 57)))
+        with patch(
+            "smf_parser.datasets.import_module", side_effect=import_module_side_effect
+        ):
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)", header_catalog=header_catalog(30, 57)
+                )
+            )
 
         self.assertEqual([record.record_type for record in parsed], [30])
 
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
-            patch("smf_parser.datasets.import_module", side_effect=ImportError("no zoau")),
+            patch(
+                "smf_parser.datasets.import_module", side_effect=ImportError("no zoau")
+            ),
             self.assertRaises(ZOAUMissingError),
         ):
             list(read_dataset("USER.SMF.UNLOAD"))

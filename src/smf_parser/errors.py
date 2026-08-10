@@ -17,7 +17,7 @@ class SMFParseError(SMFError):
         super().__init__(message)
 
 
-class TruncatedSMFRecord(SMFParseError):
+class TruncatedSMFRecordError(SMFParseError):
     """Raised when a record or record prefix ends before its declared length."""
 
 

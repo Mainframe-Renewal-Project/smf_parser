@@ -78,7 +78,10 @@ def resolved_ibm_names() -> set[str]:
     for target in HEADER_TARGETS:
         header_name = str(target["name"])
         names.add(header_name.removesuffix(".h").upper())
-        names.update(str(name).removesuffix(".h").upper() for name in target.get("alternate_names", ()))
+        names.update(
+            str(name).removesuffix(".h").upper()
+            for name in target.get("alternate_names", ())
+        )
     return names
 
 

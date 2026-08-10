@@ -7,7 +7,7 @@ from .errors import (
     HeaderCatalogError,
     SMFError,
     SMFParseError,
-    TruncatedSMFRecord,
+    TruncatedSMFRecordError,
     ZOAUMissingError,
     ZOAUUnsupportedDatasetError,
 )
@@ -31,7 +31,7 @@ __all__ = [
     "SMFHeader",
     "SMFParseError",
     "SMFRecord",
-    "TruncatedSMFRecord",
+    "TruncatedSMFRecordError",
     "ZOAUMissingError",
     "ZOAUUnsupportedDatasetError",
     "decode_ebcdic",
