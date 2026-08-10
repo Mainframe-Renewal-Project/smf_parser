@@ -267,7 +267,9 @@ def _read_native_vbs_smf_records(
 def _iter_native_vbs_logical_records(chunks: Iterable[bytes]) -> Iterator[bytes]:
     spanned_record = bytearray()
     for chunk in chunks:
-        segments = _vbs_block_segments(chunk)
+        segments = _native_smf_record_segment(chunk)
+        if segments is None:
+            segments = _vbs_block_segments(chunk)
         if segments is None:
             segments = _vbs_record_segment(chunk)
         if segments is None:
@@ -289,6 +291,42 @@ def _iter_native_vbs_logical_records(chunks: Iterable[bytes]) -> Iterator[bytes]
                     spanned_record.extend(segment_data)
                     yield bytes(spanned_record)
                     spanned_record.clear()
+
+
+def _native_smf_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
+    if len(chunk) < _MIN_SMF_RECORD_LENGTH:
+        return None
+    record_length = int.from_bytes(chunk[0:2], "big")
+    if record_length & 0x8000:
+        record_length &= 0x7FFF
+    if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
+        return None
+    segment_control = _native_smf_segment_control(chunk[2:4])
+    if segment_control is None:
+        return None
+    if segment_control == _VBS_SEGMENT_COMPLETE:
+        if record_length != len(chunk) or not _looks_like_smf_record_start(
+            chunk, system_ids=None
+        ):
+            return None
+        return ((segment_control, chunk),)
+    if record_length <= len(chunk):
+        return None
+    if segment_control == _VBS_SEGMENT_FIRST:
+        return ((segment_control, bytes(chunk)),)
+    return ((segment_control, bytes(chunk[4:])),)
+
+
+def _native_smf_segment_control(descriptor: bytes) -> int | None:
+    if descriptor[0] != 0:
+        return None
+    descriptor_word = int.from_bytes(descriptor, "big")
+    low_bits = descriptor_word & 0x03
+    if low_bits:
+        return low_bits
+    if descriptor_word == 0:
+        return _VBS_SEGMENT_COMPLETE
+    return None
 
 
 def _vbs_block_segments(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:

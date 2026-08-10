@@ -76,6 +76,12 @@ def invalid_length_with_embedded_supported_candidate() -> bytes:
     return struct.pack(">H", 2) + (b"x" * 16) + embedded
 
 
+def smf_record_segment(record: bytes, descriptor: int, start: int, end: int) -> bytes:
+    if start == 0:
+        return record[:2] + struct.pack(">H", descriptor) + record[4:end]
+    return record[:2] + struct.pack(">H", descriptor) + record[start:end]
+
+
 class DatasetReaderTests(unittest.TestCase):
     def test_plausible_identifier_accepts_memoryview(self) -> None:
         self.assertTrue(
@@ -498,6 +504,30 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual([record.record_type for record in parsed], [30])
         self.assertEqual(parsed[0].data, record)
+
+    def test_read_dataset_reconstructs_spanned_native_smf_record_segments(
+        self,
+    ) -> None:
+        record = standard_record(80, body=b"payload" * 1000)
+        expected = record[:2] + b"\x00\x01" + record[4:]
+        fake_native = native_reader(
+            [
+                smf_record_segment(record, 0x0001, 0, 512),
+                smf_record_segment(record, 0x0003, 512, 1024),
+                smf_record_segment(record, 0x0002, 1024, len(record)),
+            ]
+        )
+
+        with patch(
+            "pysmf.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(80))
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [80])
+        self.assertEqual(parsed[0].data, expected)
 
     def test_read_dataset_records_filters_record_types(self) -> None:
         records = list(
