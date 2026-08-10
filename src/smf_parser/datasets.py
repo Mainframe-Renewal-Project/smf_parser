@@ -222,7 +222,10 @@ def _read_native_vbs_dataset_records(
     if read_vbs_dataset is None:
         raise _unsupported_vbs_dataset_error(dataset_name, entries)
     resolved_dataset_name = _resolve_relative_gdg_name(dataset_name, entries)
-    return read_vbs_dataset(resolved_dataset_name, records=records, offset=offset, tail=tail, record_types=record_types)
+    kwargs: dict[str, object] = {"records": records, "offset": offset, "tail": tail}
+    if record_types is not None:
+        kwargs["record_types"] = record_types
+    return read_vbs_dataset(resolved_dataset_name, **kwargs)
 
 
 def _read_native_vbs_smf_records(

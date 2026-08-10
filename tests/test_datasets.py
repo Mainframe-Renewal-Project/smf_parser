@@ -333,6 +333,39 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual([record.record_type for record in parsed], [2])
         self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True, frozenset({2}))])
 
+    def test_read_dataset_keeps_native_reader_call_shape_without_record_type_filter(self) -> None:
+        calls: list[tuple[str, int, int, bool]] = []
+        fake_datasets = SimpleNamespace(
+            list_datasets=lambda pattern: [],
+            read_as_bytes=lambda *args, **kwargs: self.fail("read_as_bytes should not be called for VBS datasets"),
+        )
+        fake_gdgs = SimpleNamespace(
+            GenerationDataGroupView=lambda base: SimpleNamespace(
+                generations=[SimpleNamespace(name=f"{base}.G0001V00", record_format="VBS")]
+            )
+        )
+
+        def read_vbs_dataset(dataset_name: str, *, records: int, offset: int, tail: bool) -> list[bytes]:
+            calls.append((dataset_name, records, offset, tail))
+            return [standard_record(2, system_id="DBRA")]
+
+        fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "zoautil_py.gdgs":
+                return fake_gdgs
+            if name == "smf_parser._native":
+                return fake_native
+            raise ImportError(name)
+
+        with patch("smf_parser.datasets.import_module", side_effect=import_module_side_effect):
+            parsed = list(read_dataset("USER.SMF.UNLOAD(0)", records=10, offset=3, tail=True, header_catalog=header_catalog(2)))
+
+        self.assertEqual([record.record_type for record in parsed], [2])
+        self.assertEqual(calls, [("USER.SMF.UNLOAD.G0001V00", 10, 3, True)])
+
     def test_read_dataset_records_filters_record_types(self) -> None:
         records = list(
             read_dataset_records(
@@ -358,7 +391,7 @@ class DatasetReaderTests(unittest.TestCase):
         complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [incomplete, complete],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
         )
 
         def import_module_side_effect(name: str):
@@ -389,7 +422,7 @@ class DatasetReaderTests(unittest.TestCase):
         complete = standard_record(30, system_id="DBRA", body=b"complete")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [incomplete, complete],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [incomplete, complete],
         )
 
         def import_module_side_effect(name: str):
@@ -420,7 +453,7 @@ class DatasetReaderTests(unittest.TestCase):
         trailing_payload_candidate = standard_record(30, system_id="DBRA", body=b"payload")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [record + trailing_payload_candidate],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record + trailing_payload_candidate],
         )
 
         def import_module_side_effect(name: str):
@@ -451,7 +484,7 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(2, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [unsupported_record, supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [unsupported_record, supported_record],
         )
 
         def import_module_side_effect(name: str):
@@ -482,7 +515,7 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(30, system_id="DBRA", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [implausible_record + supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [implausible_record + supported_record],
         )
 
         def import_module_side_effect(name: str):
@@ -522,7 +555,7 @@ class DatasetReaderTests(unittest.TestCase):
         )
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [record],
         )
 
         def import_module_side_effect(name: str):
@@ -565,7 +598,7 @@ class DatasetReaderTests(unittest.TestCase):
         supported_record = standard_record(30, system_id="SYS1", body=b"supported")
 
         fake_native = SimpleNamespace(
-            read_vbs_dataset=lambda dataset_name, *, records, offset, tail, record_types: [false_record, supported_record],
+            read_vbs_dataset=lambda dataset_name, *, records, offset, tail: [false_record, supported_record],
         )
 
         def import_module_side_effect(name: str):
