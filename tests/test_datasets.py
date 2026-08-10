@@ -18,6 +18,7 @@ from tests.helpers import (
     native_reader,
     standard_record,
     vbs_block,
+    vbs_segment,
     vbs_import_module_side_effect,
 )
 
@@ -386,6 +387,51 @@ class DatasetReaderTests(unittest.TestCase):
             [
                 vbs_block((0x40, record[:128])),
                 vbs_block((0x80, record[128:])),
+            ]
+        )
+
+        with patch(
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
+        ):
+            parsed = list(
+                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [30])
+        self.assertEqual(parsed[0].data, record)
+
+    def test_read_dataset_reconstructs_complete_records_from_native_vbs_segments(
+        self,
+    ) -> None:
+        fake_native = native_reader(
+            [
+                vbs_segment(0x00, standard_record(2)),
+                vbs_segment(0x00, standard_record(30)),
+            ]
+        )
+
+        with patch(
+            "smf_parser.datasets.import_module",
+            side_effect=vbs_import_module_side_effect(fake_native),
+        ):
+            parsed = list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)
+                )
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [2, 30])
+
+    def test_read_dataset_reconstructs_spanned_record_from_native_vbs_segments(
+        self,
+    ) -> None:
+        record = standard_record(30, body=b"payload" * 100)
+        fake_native = native_reader(
+            [
+                vbs_segment(0x40, record[:128]),
+                vbs_segment(0xC0, record[128:256]),
+                vbs_segment(0x80, record[256:]),
             ]
         )
 

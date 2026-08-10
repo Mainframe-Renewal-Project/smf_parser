@@ -264,6 +264,8 @@ def _iter_native_vbs_logical_records(chunks: Iterable[bytes]) -> Iterator[bytes]
     for chunk in chunks:
         segments = _vbs_block_segments(chunk)
         if segments is None:
+            segments = _vbs_record_segment(chunk)
+        if segments is None:
             spanned_record.clear()
             yield chunk
             continue
@@ -307,11 +309,48 @@ def _vbs_block_segments(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
             _VBS_SEGMENT_MIDDLE,
         }:
             return None
-        segments.append(
-            (segment_control, bytes(chunk[offset + 4 : offset + segment_length]))
-        )
+        segment_data = bytes(chunk[offset + 4 : offset + segment_length])
+        if not _vbs_segment_data_is_plausible(segment_control, segment_data):
+            return None
+        segments.append((segment_control, segment_data))
         offset += segment_length
     return tuple(segments)
+
+
+def _vbs_record_segment(chunk: bytes) -> tuple[tuple[int, bytes], ...] | None:
+    if len(chunk) < 4:
+        return None
+    segment_length = int.from_bytes(chunk[0:2], "big")
+    if segment_length != len(chunk):
+        return None
+    segment_control = chunk[2] & 0xC0
+    if segment_control not in {
+        _VBS_SEGMENT_COMPLETE,
+        _VBS_SEGMENT_FIRST,
+        _VBS_SEGMENT_LAST,
+        _VBS_SEGMENT_MIDDLE,
+    }:
+        return None
+    segment_data = bytes(chunk[4:])
+    if not _vbs_segment_data_is_plausible(segment_control, segment_data):
+        return None
+    return ((segment_control, segment_data),)
+
+
+def _vbs_segment_data_is_plausible(segment_control: int, segment_data: bytes) -> bool:
+    if segment_control not in {_VBS_SEGMENT_COMPLETE, _VBS_SEGMENT_FIRST}:
+        return True
+    if len(segment_data) < 2:
+        return False
+    record_length = int.from_bytes(segment_data[0:2], "big")
+    if record_length & 0x8000:
+        record_length &= 0x7FFF
+    if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
+        return False
+    return (
+        segment_control != _VBS_SEGMENT_COMPLETE
+        or record_length <= len(segment_data)
+    )
 
 
 def _resolve_relative_gdg_name(dataset_name: str, entries) -> str:

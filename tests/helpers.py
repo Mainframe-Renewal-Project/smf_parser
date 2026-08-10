@@ -53,6 +53,10 @@ def vbs_block(*segments: tuple[int, bytes], trailing: bytes = b"") -> bytes:
     return block + trailing
 
 
+def vbs_segment(control: int, data: bytes) -> bytes:
+    return struct.pack(">HBB", len(data) + 4, control, 0) + data
+
+
 def header_catalog(*record_types: int) -> HeaderCatalog:
     include_dir = Path("/compiled/zos")
     return HeaderCatalog(
