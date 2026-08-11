@@ -103,6 +103,8 @@ The default `record_format="auto"` detects those forms for seekable inputs.
 record formats. It detects whether each returned dataset record is already an
 SMF record or still contains an external RDW.
 
+More examples are available in [examples](examples/README.md).
+
 ## Build
 
 During package build on z/OS, `setup.py` compiles a native parser extension and
