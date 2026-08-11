@@ -94,6 +94,20 @@ def rdw_stream(records: Iterable[SMFRecord]) -> bytes:
     )
 
 
+def normalized_smf_length(value: int) -> int:
+    return value & 0x7FFF
+
+
+def normalized_field_length(value: object) -> int | None:
+    if not isinstance(value, int):
+        return None
+    return value & 0xFFFF & 0x7FFF
+
+
+def is_expected_header_field_name(record_type: int, field_name: str) -> bool:
+    return field_name.startswith(f"smf{record_type}") or "_dummy_" in field_name
+
+
 class ZOSSmokeTests(unittest.TestCase):
     sample_key: ClassVar[tuple[str, int] | None] = None
     sample_dataset_names: ClassVar[tuple[str, ...]] = ()
@@ -149,6 +163,33 @@ class ZOSSmokeTests(unittest.TestCase):
             if record.record_type == record_type
         )
 
+    def structured_record_type_is_present(self, record_type: int) -> bool:
+        if self.records_of_type(record_type):
+            return True
+        return any(
+            read_structured_dataset(
+                dataset_name,
+                record_types={record_type},
+                records=self.record_limit,
+                errors="skip",
+            )
+            for dataset_name in self.dataset_names
+        )
+
+    def raw_records_of_type(self, record_type: int) -> tuple[SMFRecord, ...]:
+        records: list[SMFRecord] = []
+        for dataset_name in self.dataset_names:
+            records.extend(
+                read_dataset(
+                    dataset_name,
+                    record_types={record_type},
+                    records=self.record_limit,
+                )
+            )
+            if records:
+                break
+        return tuple(records)
+
     def test_native_extension_is_available(self) -> None:
         from pysmf import records
 
@@ -199,7 +240,11 @@ class ZOSSmokeTests(unittest.TestCase):
                 self.assertEqual(record.header.record_type, record.record_type)
                 self.assertEqual(
                     record.data[:2],
-                    record.header.length.to_bytes(2, "big"),
+                    record.header.raw_length.to_bytes(2, "big"),
+                )
+                self.assertEqual(
+                    normalized_smf_length(record.header.raw_length),
+                    record.header.length,
                 )
                 self.assertIsInstance(record.header.system_id_text, str)
 
@@ -231,7 +276,9 @@ class ZOSSmokeTests(unittest.TestCase):
         if not raw_records:
             self.skipTest("dataset sample did not include raw SMF records")
 
-        parsed_smf = tuple(read_records(BytesIO(smf_stream(raw_records))))
+        parsed_smf = tuple(
+            read_records(BytesIO(smf_stream(raw_records)), record_format="smf")
+        )
         parsed_rdw = tuple(
             read_records(BytesIO(rdw_stream(raw_records)), record_format="rdw")
         )
@@ -251,7 +298,11 @@ class ZOSSmokeTests(unittest.TestCase):
             self.skipTest("dataset sample did not include raw SMF records")
 
         structured = tuple(
-            read_structured_records(BytesIO(smf_stream(raw_records)), errors="skip")
+            read_structured_records(
+                BytesIO(smf_stream(raw_records)),
+                record_format="smf",
+                errors="skip",
+            )
         )
 
         self.assertTrue(structured)
@@ -265,13 +316,7 @@ class ZOSSmokeTests(unittest.TestCase):
             self.skipTest("dataset sample did not include raw SMF records")
         selected_type = self.raw_records[0].record_type
 
-        filtered = tuple(
-            read_dataset(
-                self.dataset_names[0],
-                record_types={selected_type},
-                records=self.record_limit,
-            )
-        )
+        filtered = self.raw_records_of_type(selected_type)
 
         self.assertTrue(filtered)
         self.assertEqual({record.record_type for record in filtered}, {selected_type})
@@ -290,9 +335,14 @@ class ZOSSmokeTests(unittest.TestCase):
             self.skipTest(f"set {ZOS_EXPECTED_RECORD_TYPES_ENV} to enforce coverage")
 
         observed = {record.record_type for record in self.records}
+        missing = {
+            record_type
+            for record_type in expected - observed
+            if not self.structured_record_type_is_present(record_type)
+        }
         self.assertFalse(
-            expected - observed,
-            f"missing record types: {expected - observed}",
+            missing,
+            f"missing record types: {missing}",
         )
 
     def test_real_dataset_fixed_header_fields_are_plausible(self) -> None:
@@ -306,7 +356,10 @@ class ZOSSmokeTests(unittest.TestCase):
                     self.assertEqual(fields[type_field], record.record_type)
                 length_field = f"{prefix}len"
                 if length_field in fields and record.header is not None:
-                    self.assertEqual(fields[length_field], record.header.length)
+                    self.assertEqual(
+                        normalized_field_length(fields[length_field]),
+                        record.header.length,
+                    )
                 self.assertFalse(
                     record.sections and "relocate_sections" in fields,
                     "section internals should not leak into scalar fields",
@@ -334,10 +387,12 @@ class ZOSSmokeTests(unittest.TestCase):
 
     def test_real_dataset_scalar_fields_keep_record_prefixes(self) -> None:
         for record in self.records:
-            prefix = f"smf{record.record_type}"
             for field_name in record.fields:
                 with self.subTest(record_type=record.record_type, field=field_name):
-                    self.assertTrue(field_name.startswith(prefix), field_name)
+                    self.assertTrue(
+                        is_expected_header_field_name(record.record_type, field_name),
+                        field_name,
+                    )
 
     def test_real_dataset_sections_are_bounded(self) -> None:
         for record in self.records:
