@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib import import_module
-from collections.abc import Iterable, Mapping
-from typing import Any
+from os import PathLike
+from typing import Any, BinaryIO, Literal
 
-from .errors import HeaderCatalogError, SMFParseError
-from .reader import SMFRecord, decode_ebcdic, parse_header
+from .datasets import DatasetRecordFormat
+from .errors import SMFParseError, SMFRecordTypeSupportError
+from .headers import SMFRecordTypeRegistry
+from .reader import RecordFormat, SMFHeader, SMFRecord, decode_ebcdic, parse_header
 
 try:
     _native: Any | None = import_module("pysmf._native")
@@ -20,6 +23,7 @@ _PRINTABLE_TEXT = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 #$@._-/():,"
 )
 _TOKEN_CHARACTERS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$@")
+StructuredErrorMode = Literal["raise", "skip"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +52,32 @@ class StructuredSMFRecord:
     sections: tuple[SMFFieldSection, ...] = ()
     extended_sections: tuple[SMFFieldSection, ...] = ()
     raw_fields: dict[str, int | bytes] = field(default_factory=dict)
+    source: SMFRecord | None = None
 
     def __getitem__(self, key: str) -> int | bytes | str:
         return self.fields[key]
+
+    @property
+    def header(self) -> SMFHeader | None:
+        return self.source.header if self.source is not None else None
+
+    @property
+    def offset(self) -> int | None:
+        return self.source.offset if self.source is not None else None
+
+    @property
+    def subtype(self) -> int | None:
+        return self.source.subtype if self.source is not None else None
+
+    @property
+    def system_id_text(self) -> str:
+        return self.source.header.system_id_text if self.source is not None else ""
+
+    @property
+    def subsystem_id_text(self) -> str:
+        if self.source is None:
+            return ""
+        return self.source.header.subsystem_id_text or ""
 
     def field_text(self, key: str) -> str:
         value = self.fields[key]
@@ -133,22 +160,113 @@ def parse_record(
     if isinstance(record, SMFRecord):
         data = record.data
         record_type = record.record_type
+        source = record
     else:
         data = bytes(record)
         header = parse_header(data)
         record_type = header.record_type
+        source = None
     try:
         fields = _native_fields(record_type, data)
     except NotImplementedError as error:
-        raise HeaderCatalogError(
+        raise SMFRecordTypeSupportError(
             f"SMF type {record_type} structured parsing requires its IBM C header"
         ) from error
     except ValueError as error:
         raise SMFParseError(str(error)) from error
 
-    structured = _structured_record(record_type, fields)
+    structured = _structured_record(record_type, fields, source=source)
     _validate_structured_record(record_type, structured)
     return structured
+
+
+def parse_records(
+    records: Iterable[SMFRecord | bytes | bytearray | memoryview],
+    *,
+    errors: StructuredErrorMode = "raise",
+) -> Iterator[StructuredSMFRecord]:
+    """Yield structured records from already-read SMF records or bytes."""
+
+    if errors not in {"raise", "skip"}:
+        raise ValueError(f"unsupported structured error mode: {errors!r}")
+    for record in records:
+        try:
+            yield parse_record(record)
+        except (SMFRecordTypeSupportError, SMFParseError):
+            if errors == "skip":
+                continue
+            raise
+
+
+def read_structured_records(
+    source: bytes | bytearray | memoryview | str | PathLike[str] | BinaryIO,
+    *,
+    record_format: RecordFormat = "auto",
+    header_catalog: SMFRecordTypeRegistry | None = None,
+    errors: StructuredErrorMode = "raise",
+) -> Iterator[StructuredSMFRecord]:
+    """Read and parse structured SMF records from bytes, a path, or a stream."""
+
+    from .reader import read_records
+
+    yield from parse_records(
+        read_records(
+            source,
+            record_format=record_format,
+            header_catalog=header_catalog,
+        ),
+        errors=errors,
+    )
+
+
+def read_structured_file(
+    path: str | PathLike[str],
+    *,
+    record_format: RecordFormat = "auto",
+    header_catalog: SMFRecordTypeRegistry | None = None,
+    errors: StructuredErrorMode = "raise",
+) -> Iterator[StructuredSMFRecord]:
+    """Read and parse structured SMF records from an unload file path."""
+
+    yield from read_structured_records(
+        path,
+        record_format=record_format,
+        header_catalog=header_catalog,
+        errors=errors,
+    )
+
+
+def read_structured_dataset(
+    dataset_name: str,
+    *,
+    record_format: DatasetRecordFormat = "auto",
+    skip_short_records: bool = True,
+    header_catalog: SMFRecordTypeRegistry | None = None,
+    system_ids: Collection[str] | None = None,
+    record_types: Collection[int] | None = None,
+    records: int = 0,
+    offset: int = 0,
+    tail: bool = False,
+    errors: StructuredErrorMode = "raise",
+) -> Iterator[StructuredSMFRecord]:
+    """Read and parse structured SMF records directly from a z/OS dataset."""
+
+    from .datasets import read_dataset
+
+    yield from parse_records(
+        read_dataset(
+            dataset_name,
+            record_format=record_format,
+            skip_short_records=skip_short_records,
+            header_catalog=header_catalog,
+            system_ids=system_ids,
+            record_types=record_types,
+            records=records,
+            offset=offset,
+            tail=tail,
+        ),
+        errors=errors,
+    )
 
 
 def _native_fields(record_type: int, data: bytes | bytearray | memoryview):
@@ -158,14 +276,14 @@ def _native_fields(record_type: int, data: bytes | bytearray | memoryview):
         parse_native_record = getattr(native, "parse_record", None)
     if parse_native_record is not None:
         return parse_native_record(record_type, data)
-    raise HeaderCatalogError(
+    raise SMFRecordTypeSupportError(
         "structured SMF parsing requires pysmf._native built with generated "
         "IBM header mappings"
     )
 
 
 def _structured_record(
-    record_type: int, fields: dict[str, object]
+    record_type: int, fields: dict[str, object], *, source: SMFRecord | None = None
 ) -> StructuredSMFRecord:
     regular_sections = _sections(fields, "relocate_sections")
     extended_sections = _sections(fields, "extended_relocate_sections")
@@ -189,6 +307,7 @@ def _structured_record(
         sections=regular_sections,
         extended_sections=extended_sections,
         raw_fields=raw_fields,
+        source=source,
     )
 
 

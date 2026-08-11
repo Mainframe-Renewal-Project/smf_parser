@@ -7,11 +7,18 @@ from .errors import (
     HeaderCatalogError,
     SMFError,
     SMFParseError,
+    SMFRecordTypeSupportError,
     TruncatedSMFRecordError,
     ZOAUMissingError,
     ZOAUUnsupportedDatasetError,
 )
-from .headers import HeaderCatalog, HeaderDefinition, default_include_dir
+from .headers import (
+    HeaderCatalog,
+    HeaderDefinition,
+    SMFRecordTypeDefinition,
+    SMFRecordTypeRegistry,
+    default_include_dir,
+)
 from .reader import (
     ExternalRDW,
     SMFHeader,
@@ -21,18 +28,26 @@ from .reader import (
     read_file,
     read_records,
 )
-from .records import SMFFieldSection, StructuredSMFRecord, parse_record
+from .records import (
+    SMFFieldSection,
+    StructuredSMFRecord,
+    parse_record,
+    parse_records,
+    read_structured_dataset,
+    read_structured_file,
+    read_structured_records,
+)
 
 __all__ = [
     "ExternalRDW",
-    "HeaderCatalog",
-    "HeaderCatalogError",
-    "HeaderDefinition",
     "SMFError",
     "SMFFieldSection",
     "SMFHeader",
     "SMFParseError",
     "SMFRecord",
+    "SMFRecordTypeDefinition",
+    "SMFRecordTypeRegistry",
+    "SMFRecordTypeSupportError",
     "StructuredSMFRecord",
     "TruncatedSMFRecordError",
     "ZOAUMissingError",
@@ -41,8 +56,12 @@ __all__ = [
     "default_include_dir",
     "parse_header",
     "parse_record",
+    "parse_records",
     "read_dataset",
     "read_dataset_records",
     "read_file",
     "read_records",
+    "read_structured_dataset",
+    "read_structured_file",
+    "read_structured_records",
 ]

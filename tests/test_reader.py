@@ -9,9 +9,11 @@ from unittest.mock import patch
 
 from pysmf import (
     HeaderCatalog,
-    HeaderCatalogError,
     HeaderDefinition,
     SMFParseError,
+    SMFRecordTypeDefinition,
+    SMFRecordTypeRegistry,
+    SMFRecordTypeSupportError,
     parse_header,
     read_records,
 )
@@ -79,12 +81,12 @@ def extended_v2_record(
     return standard_header + extended_header + body
 
 
-def header_catalog(*record_types: int) -> HeaderCatalog:
+def header_catalog(*record_types: int) -> SMFRecordTypeRegistry:
     include_dir = Path("/compiled/zos")
-    return HeaderCatalog(
+    return SMFRecordTypeRegistry(
         include_dir=include_dir,
         headers=(
-            HeaderDefinition(
+            SMFRecordTypeDefinition(
                 name="ifasmfr.h",
                 path=include_dir / "ifasmfr.h",
                 record_types=record_types,
@@ -243,14 +245,14 @@ class ReaderTests(unittest.TestCase):
             list(read_records(b"\0\x01\0\0", header_catalog=header_catalog(2)))
 
     def test_rejects_records_without_matching_c_header(self) -> None:
-        with self.assertRaises(HeaderCatalogError):
+        with self.assertRaises(SMFRecordTypeSupportError):
             list(read_records(standard_record(30), header_catalog=header_catalog(2)))
 
 
-class HeaderCatalogTests(unittest.TestCase):
+class SMFRecordTypeRegistryTests(unittest.TestCase):
     def test_discovers_retained_c_headers(self) -> None:
         include_dir = Path("/compiled/zos")
-        definition = HeaderDefinition(
+        definition = SMFRecordTypeDefinition(
             name="ifasmfh.h",
             path=include_dir / "ifasmfh.h",
             record_types=(92,),
@@ -260,7 +262,7 @@ class HeaderCatalogTests(unittest.TestCase):
             "pysmf.headers._compiled_headers",
             return_value=(include_dir, (definition,)),
         ):
-            catalog = HeaderCatalog.discover(include_dir)
+            catalog = SMFRecordTypeRegistry.discover(include_dir)
 
         self.assertIsNotNone(catalog.by_name("ifasmfh"))
         self.assertTrue(
@@ -269,10 +271,10 @@ class HeaderCatalogTests(unittest.TestCase):
 
     def test_finds_ibm_uppercase_extensionless_headers_by_logical_name(self) -> None:
         include_dir = Path("/usr/include/IBM")
-        catalog = HeaderCatalog(
+        catalog = SMFRecordTypeRegistry(
             include_dir=include_dir,
             headers=(
-                HeaderDefinition(
+            SMFRecordTypeDefinition(
                     name="ifasmfr.h",
                     path=include_dir / "IFASMFR",
                     record_types=(),
@@ -287,16 +289,16 @@ class HeaderCatalogTests(unittest.TestCase):
 
     def test_generic_headers_do_not_match_every_record_type(self) -> None:
         include_dir = Path("/compiled/zos")
-        catalog = HeaderCatalog(
+        catalog = SMFRecordTypeRegistry(
             include_dir=include_dir,
             headers=(
-                HeaderDefinition(
+            SMFRecordTypeDefinition(
                     name="ifasmfh.h",
                     path=include_dir / "ifasmfh.h",
                     record_types=(),
                     generic=True,
                 ),
-                HeaderDefinition(
+                SMFRecordTypeDefinition(
                     name="ifasmfr1.h",
                     path=include_dir / "ifasmfr1.h",
                     record_types=(1,),
@@ -309,6 +311,10 @@ class HeaderCatalogTests(unittest.TestCase):
         self.assertEqual(
             tuple(header.name for header in catalog.for_record_type(1)), ("ifasmfr1.h",)
         )
+
+    def test_old_header_names_remain_compatible(self) -> None:
+        self.assertIs(HeaderCatalog, SMFRecordTypeRegistry)
+        self.assertIs(HeaderDefinition, SMFRecordTypeDefinition)
 
 
 if __name__ == "__main__":

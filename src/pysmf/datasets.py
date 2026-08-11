@@ -7,12 +7,12 @@ from importlib import import_module
 from typing import cast
 
 from .errors import (
-    HeaderCatalogError,
     SMFParseError,
+    SMFRecordTypeSupportError,
     ZOAUMissingError,
     ZOAUUnsupportedDatasetError,
 )
-from .headers import HeaderCatalog
+from .headers import SMFRecordTypeRegistry
 from .reader import (
     ExternalRDW,
     RecordFormat,
@@ -41,7 +41,7 @@ def read_dataset(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
-    header_catalog: HeaderCatalog | None = None,
+    header_catalog: SMFRecordTypeRegistry | None = None,
     system_ids: Collection[str] | None = None,
     record_types: Collection[int] | None = None,
     records: int = 0,
@@ -93,7 +93,7 @@ def read_dataset_records(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
-    header_catalog: HeaderCatalog | None = None,
+    header_catalog: SMFRecordTypeRegistry | None = None,
     system_ids: Collection[str] | None = None,
     record_types: Collection[int] | None = None,
 ) -> Iterator[SMFRecord]:
@@ -247,7 +247,7 @@ def _read_native_vbs_dataset_records(
 def _read_native_vbs_smf_records(
     records: Iterable[bytes],
     *,
-    header_catalog: HeaderCatalog | None,
+    header_catalog: SMFRecordTypeRegistry | None,
     system_ids: Collection[str] | None,
     record_types: frozenset[int] | None,
 ) -> Iterator[SMFRecord]:
@@ -495,7 +495,7 @@ def _read_smf_dataset_records(
     *,
     record_format: DatasetRecordFormat,
     skip_short_records: bool,
-    header_catalog: HeaderCatalog,
+    header_catalog: SMFRecordTypeRegistry,
     system_ids: Collection[str] | None,
     record_types: frozenset[int] | None,
     split_on_record_start: bool = True,
@@ -556,7 +556,7 @@ def _drain_smf_buffer(
     *,
     buffer_offset: int,
     skip_invalid_records: bool,
-    header_catalog: HeaderCatalog,
+    header_catalog: SMFRecordTypeRegistry,
     system_ids: Collection[str] | None,
     record_types: frozenset[int] | None,
     trusted_record_boundaries: bool = False,
@@ -603,8 +603,8 @@ def _drain_smf_buffer(
         if not header_definitions or not header_is_plausible:
             if not skip_invalid_records:
                 if not header_definitions:
-                    raise HeaderCatalogError(
-                        "no z/OS C header definition found for SMF record "
+                    raise SMFRecordTypeSupportError(
+                        "no structured support found for SMF record "
                         f"type {header.record_type}"
                     )
                 parse_header(data, offset=header_offset)
@@ -689,10 +689,16 @@ def _looks_like_smf_record_start(
     )
 
 
-def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatalog:
-    catalog = HeaderCatalog.discover() if header_catalog is None else header_catalog
+def _require_header_catalog(
+    header_catalog: SMFRecordTypeRegistry | None,
+) -> SMFRecordTypeRegistry:
+    catalog = (
+        SMFRecordTypeRegistry.discover() if header_catalog is None else header_catalog
+    )
     if not catalog.headers:
-        raise HeaderCatalogError(f"no z/OS C headers found in {catalog.include_dir}")
+        raise SMFRecordTypeSupportError(
+            f"no SMF record type support found in {catalog.include_dir}"
+        )
     return catalog
 
 
@@ -714,7 +720,7 @@ def _read_one_rdw_dataset_record(
     data: bytes,
     *,
     logical_offset: int,
-    header_catalog: HeaderCatalog,
+    header_catalog: SMFRecordTypeRegistry,
     record_types: frozenset[int] | None = None,
 ) -> Iterator[SMFRecord]:
     for record in read_records(

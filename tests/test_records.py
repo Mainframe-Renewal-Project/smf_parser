@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import unittest
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from pysmf import HeaderCatalogError, SMFParseError, parse_record
-from tests.helpers import ebcdic, standard_record
+from pysmf import (
+    SMFParseError,
+    SMFRecordTypeSupportError,
+    parse_record,
+    parse_records,
+    read_structured_records,
+)
+from tests.helpers import ebcdic, header_catalog, standard_record
 
 
 def native_type80_fields() -> dict[str, object]:
@@ -76,6 +83,10 @@ class StructuredRecordTests(unittest.TestCase):
             parsed = parse_record(standard_record(80))
 
         self.assertEqual(parsed.record_type, 80)
+        self.assertIsNone(parsed.source)
+        self.assertIsNone(parsed.header)
+        self.assertIsNone(parsed.offset)
+        self.assertIsNone(parsed.subtype)
         self.assertEqual(parsed["smf80evt"], 2)
         self.assertEqual(parsed["smf80evq"], 3)
         self.assertEqual(parsed["smf80usr"], "SECADM1")
@@ -156,11 +167,58 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertEqual(parsed.extended_sections[0].offset, 140)
         self.assertEqual(parsed.extended_sections[0].text, "PERMIT")
 
+    def test_parse_records_can_skip_unsupported_records(self) -> None:
+        from pysmf import records
+
+        def parse_native_record(record_type: int, _data: bytes) -> dict[str, object]:
+            if record_type == 80:
+                return native_type80_fields()
+            raise NotImplementedError("unsupported SMF type")
+
+        native = SimpleNamespace(parse_record=parse_native_record)
+
+        with patch.object(records, "_native", native):
+            parsed = tuple(
+                parse_records(
+                    [standard_record(81), standard_record(80)],
+                    errors="skip",
+                )
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [80])
+
+    def test_parse_records_rejects_unknown_error_mode(self) -> None:
+        with self.assertRaises(ValueError):
+            tuple(parse_records([], errors="ignore"))  # type: ignore[arg-type]
+
+    def test_read_structured_records_reads_and_parses_records(self) -> None:
+        from pysmf import records
+
+        native = SimpleNamespace(
+            parse_record=lambda _record_type, _data: native_type80_fields()
+        )
+        source = BytesIO(standard_record(80))
+
+        with patch.object(records, "_native", native):
+            parsed = tuple(
+                read_structured_records(source, header_catalog=header_catalog(80))
+            )
+
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].record_type, 80)
+        self.assertIsNotNone(parsed[0].source)
+        self.assertIsNotNone(parsed[0].header)
+        self.assertEqual(parsed[0].offset, 0)
+        self.assertEqual(parsed[0].subtype, 0)
+        self.assertEqual(parsed[0].system_id_text, "SYS1")
+        self.assertEqual(parsed[0].subsystem_id_text, "SMF")
+        self.assertEqual(parsed[0]["smf80usr"], "SECADM1")
+
     def test_parse_record_requires_native_header_support(self) -> None:
         from pysmf import records
 
         with patch.object(records, "_native", None):
-            with self.assertRaises(HeaderCatalogError):
+            with self.assertRaises(SMFRecordTypeSupportError):
                 parse_record(standard_record(80))
 
     def test_parse_record_reports_missing_structured_parser(self) -> None:
@@ -172,7 +230,7 @@ class StructuredRecordTests(unittest.TestCase):
         native = SimpleNamespace(parse_record=parse_record_error)
 
         with patch.object(records, "_native", native):
-            with self.assertRaises(HeaderCatalogError):
+            with self.assertRaises(SMFRecordTypeSupportError):
                 parse_record(standard_record(81))
 
     def test_parse_record_maps_native_validation_errors(self) -> None:

@@ -4,7 +4,7 @@ import struct
 from pathlib import Path
 from types import SimpleNamespace
 
-from pysmf import HeaderCatalog, HeaderDefinition
+from pysmf import SMFRecordTypeDefinition, SMFRecordTypeRegistry
 
 try:
     "".encode("cp1047")
@@ -61,12 +61,12 @@ def vbs_segment_word(control: int, data: bytes) -> bytes:
     return struct.pack(">HH", len(data) + 4, control) + data
 
 
-def header_catalog(*record_types: int) -> HeaderCatalog:
+def header_catalog(*record_types: int) -> SMFRecordTypeRegistry:
     include_dir = Path("/compiled/zos")
-    return HeaderCatalog(
+    return SMFRecordTypeRegistry(
         include_dir=include_dir,
         headers=(
-            HeaderDefinition(
+            SMFRecordTypeDefinition(
                 name="ifasmfr.h",
                 path=include_dir / "ifasmfr.h",
                 record_types=record_types,

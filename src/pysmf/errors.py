@@ -21,8 +21,11 @@ class TruncatedSMFRecordError(SMFParseError):
     """Raised when a record or record prefix ends before its declared length."""
 
 
-class HeaderCatalogError(SMFError):
-    """Raised when required z/OS C headers are unavailable or incomplete."""
+class SMFRecordTypeSupportError(SMFError):
+    """Raised when SMF record type support is unavailable or incomplete."""
+
+
+HeaderCatalogError = SMFRecordTypeSupportError
 
 
 class ZOAUMissingError(SMFError):

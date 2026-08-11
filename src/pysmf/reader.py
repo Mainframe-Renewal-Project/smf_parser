@@ -14,8 +14,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
-from .errors import HeaderCatalogError, SMFParseError, TruncatedSMFRecordError
-from .headers import HeaderCatalog, HeaderDefinition
+from .errors import SMFParseError, SMFRecordTypeSupportError, TruncatedSMFRecordError
+from .headers import SMFRecordTypeDefinition, SMFRecordTypeRegistry
 
 try:
     _native: Any | None = import_module("pysmf._native")
@@ -106,7 +106,7 @@ class SMFRecord:
     header: SMFHeader
     offset: int
     rdw: ExternalRDW | None = None
-    header_definitions: tuple[HeaderDefinition, ...] = ()
+    header_definitions: tuple[SMFRecordTypeDefinition, ...] = ()
 
     @property
     def record_type(self) -> int:
@@ -123,7 +123,7 @@ class SMFRecord:
         return self.data[self.header.header_length :]
 
     @property
-    def c_headers(self) -> tuple[HeaderDefinition, ...]:
+    def c_headers(self) -> tuple[SMFRecordTypeDefinition, ...]:
         """C header definitions that appear to map this record type."""
 
         return self.header_definitions
@@ -373,7 +373,7 @@ def read_records(
     source: bytes | bytearray | memoryview | str | PathLike[str] | BinaryIO,
     *,
     record_format: RecordFormat = "auto",
-    header_catalog: HeaderCatalog | None = None,
+    header_catalog: SMFRecordTypeRegistry | None = None,
 ) -> Iterator[SMFRecord]:
     """Yield SMF records from bytes, a path, or a binary file object.
 
@@ -400,7 +400,7 @@ def read_file(
     path: str | PathLike[str],
     *,
     record_format: RecordFormat = "auto",
-    header_catalog: HeaderCatalog | None = None,
+    header_catalog: SMFRecordTypeRegistry | None = None,
 ) -> Iterator[SMFRecord]:
     """Yield SMF records from an unload file path."""
 
@@ -448,7 +448,7 @@ def _detect_format(stream: BinaryIO) -> Literal["smf", "rdw"]:
 
 
 def _read_smf_records(
-    stream: BinaryIO, *, header_catalog: HeaderCatalog
+    stream: BinaryIO, *, header_catalog: SMFRecordTypeRegistry
 ) -> Iterator[SMFRecord]:
     offset = stream.tell() if stream.seekable() else 0
     while True:
@@ -477,7 +477,7 @@ def _read_smf_records(
 
 
 def _read_external_rdw_records(
-    stream: BinaryIO, *, header_catalog: HeaderCatalog
+    stream: BinaryIO, *, header_catalog: SMFRecordTypeRegistry
 ) -> Iterator[SMFRecord]:
     offset = stream.tell() if stream.seekable() else 0
     while True:
@@ -504,20 +504,26 @@ def _read_external_rdw_records(
         offset += rdw_length
 
 
-def _require_header_catalog(header_catalog: HeaderCatalog | None) -> HeaderCatalog:
-    catalog = HeaderCatalog.discover() if header_catalog is None else header_catalog
+def _require_header_catalog(
+    header_catalog: SMFRecordTypeRegistry | None,
+) -> SMFRecordTypeRegistry:
+    catalog = (
+        SMFRecordTypeRegistry.discover() if header_catalog is None else header_catalog
+    )
     if not catalog.headers:
-        raise HeaderCatalogError(f"no z/OS C headers found in {catalog.include_dir}")
+        raise SMFRecordTypeSupportError(
+            f"no SMF record type support found in {catalog.include_dir}"
+        )
     return catalog
 
 
 def _definitions_for_record(
-    catalog: HeaderCatalog, header: SMFHeader
-) -> tuple[HeaderDefinition, ...]:
+    catalog: SMFRecordTypeRegistry, header: SMFHeader
+) -> tuple[SMFRecordTypeDefinition, ...]:
     definitions = catalog.for_record_type(header.record_type)
     if not definitions:
-        raise HeaderCatalogError(
-            "no z/OS C header definition found for SMF record type "
+        raise SMFRecordTypeSupportError(
+            "no structured support found for SMF record type "
             f"{header.record_type}"
         )
     return definitions
