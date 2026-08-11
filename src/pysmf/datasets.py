@@ -63,6 +63,7 @@ def read_dataset(
     is available; other datasets are read with ``zoautil_py.datasets.read_as_bytes``.
     """
 
+    _validate_dataset_name(dataset_name)
     datasets = _zoau_datasets_module()
     selected_record_types = _normalized_record_types(record_types)
     vbs_entries = _zoau_vbs_dataset_entries(datasets, dataset_name)
@@ -160,6 +161,40 @@ def _normalized_record_types(
                 f"SMF record type must be between 0 and 65535: {record_type!r}"
             )
     return normalized
+
+
+def _validate_dataset_name(dataset_name: str) -> None:
+    if dataset_name.startswith(("//", "DD:", "/")):
+        return
+    if _is_relative_gdg_name(dataset_name):
+        base = dataset_name[:-1].split("(", maxsplit=1)[0]
+        _validate_dataset_name(base)
+        return
+    base, member = _split_dataset_member(dataset_name)
+    if not base:
+        raise ValueError(f"invalid z/OS dataset name: {dataset_name!r}")
+    if member is not None and not _is_valid_dataset_qualifier(member):
+        raise ValueError(f"invalid z/OS dataset name: {dataset_name!r}")
+    for qualifier in base.split("."):
+        if not _is_valid_dataset_qualifier(qualifier):
+            raise ValueError(f"invalid z/OS dataset name: {dataset_name!r}")
+
+
+def _split_dataset_member(dataset_name: str) -> tuple[str, str | None]:
+    if not dataset_name.endswith(")"):
+        return dataset_name, None
+    member_start = dataset_name.rfind("(")
+    if member_start < 0:
+        return dataset_name, None
+    return dataset_name[:member_start], dataset_name[member_start + 1 : -1]
+
+
+def _is_valid_dataset_qualifier(value: str) -> bool:
+    if not 1 <= len(value) <= 8:
+        return False
+    if not (value[0].isalpha() or value[0] in "#$@"):
+        return False
+    return all(character.isalnum() or character in "#$@" for character in value)
 
 
 def _zoau_datasets_module():

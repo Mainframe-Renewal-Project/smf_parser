@@ -328,6 +328,19 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertFalse(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD(ABC)"))
         self.assertFalse(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD"))
 
+    def test_read_dataset_rejects_invalid_dataset_name_before_zoau(self) -> None:
+        with (
+            patch("pysmf.datasets.import_module") as import_module,
+            self.assertRaisesRegex(ValueError, "invalid z/OS dataset name: '81'"),
+        ):
+            list(read_dataset("81"))
+
+        import_module.assert_not_called()
+
+    def test_dataset_name_validation_allows_relative_gdgs(self) -> None:
+        dataset_module._validate_dataset_name("USER.SMF.UNLOAD(-1)")
+        dataset_module._validate_dataset_name("USER.SMF.UNLOAD(0)")
+
     def test_read_dataset_uses_native_reader_for_zoau_vbs_datasets(self) -> None:
         calls: list[tuple[str, int, int, bool]] = []
 
