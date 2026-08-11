@@ -108,6 +108,25 @@ def is_expected_header_field_name(record_type: int, field_name: str) -> bool:
     return field_name.startswith(f"smf{record_type}") or "_dummy_" in field_name
 
 
+def section_signature(
+    record: StructuredSMFRecord,
+) -> tuple[tuple[int, int, bytes], ...]:
+    return tuple(
+        (section.data_type, section.offset, section.data)
+        for section in (*record.sections, *record.extended_sections)
+    )
+
+
+def structured_output_signature(record: StructuredSMFRecord) -> tuple[object, ...]:
+    return (
+        record.record_type,
+        record.subtype,
+        record.fields,
+        record.raw_fields,
+        section_signature(record),
+    )
+
+
 class ZOSSmokeTests(unittest.TestCase):
     sample_key: ClassVar[tuple[str, int] | None] = None
     sample_dataset_names: ClassVar[tuple[str, ...]] = ()
@@ -254,13 +273,11 @@ class ZOSSmokeTests(unittest.TestCase):
             self.skipTest("dataset sample did not include raw SMF records")
 
         structured_from_parse = tuple(parse_records(raw_records, errors="skip"))
+        structured_from_dataset = self.records[: len(structured_from_parse)]
         self.assertTrue(structured_from_parse)
         self.assertEqual(
-            [record.record_type for record in structured_from_parse],
-            [
-                record.record_type
-                for record in self.records[: len(structured_from_parse)]
-            ],
+            [structured_output_signature(record) for record in structured_from_parse],
+            [structured_output_signature(record) for record in structured_from_dataset],
         )
 
     def test_parse_record_accepts_one_raw_record(self) -> None:
@@ -308,9 +325,80 @@ class ZOSSmokeTests(unittest.TestCase):
 
         self.assertTrue(structured)
         self.assertEqual(
-            [record.record_type for record in structured],
-            [record.record_type for record in expected],
+            [structured_output_signature(record) for record in structured],
+            [structured_output_signature(record) for record in expected],
         )
+
+    def test_structured_records_expose_consistent_scalar_outputs(self) -> None:
+        saw_text_field = False
+        saw_bytes_field = False
+        saw_int_field = False
+
+        for record in self.records:
+            with self.subTest(record_type=record.record_type, offset=record.offset):
+                self.assertEqual(set(record.raw_fields), set(record.fields))
+                for field_name, value in record.fields.items():
+                    self.assertEqual(record[field_name], value)
+                    raw_value = record.raw_fields[field_name]
+                    if isinstance(value, str):
+                        saw_text_field = True
+                        self.assertIsInstance(raw_value, bytes)
+                        self.assertEqual(record.field_text(field_name), value)
+                    elif isinstance(value, bytes):
+                        saw_bytes_field = True
+                        self.assertIsInstance(raw_value, bytes)
+                        self.assertIsInstance(record.field_text(field_name), str)
+                    else:
+                        saw_int_field = True
+                        self.assertIsInstance(raw_value, int)
+                        with self.assertRaises(TypeError):
+                            record.field_text(field_name)
+
+        self.assertTrue(saw_text_field, "expected at least one decoded text field")
+        self.assertTrue(saw_bytes_field, "expected at least one retained bytes field")
+        self.assertTrue(saw_int_field, "expected at least one integer field")
+
+    def test_decoded_output_helpers_return_searchable_content(self) -> None:
+        decoded_records = [record for record in self.records if record.decoded_texts()]
+        if not decoded_records:
+            self.skipTest("dataset sample did not include decoded text output")
+
+        for record in decoded_records[:25]:
+            decoded_fields = record.decoded_fields()
+            decoded_texts = record.decoded_texts()
+            tokens = record.decoded_tokens(min_length=2)
+            with self.subTest(record_type=record.record_type, offset=record.offset):
+                self.assertTrue(decoded_texts)
+                self.assertTrue(set(decoded_fields.values()).issubset(decoded_texts))
+                if tokens:
+                    self.assertTrue(record.find_text(tokens[0], token=True))
+                    self.assertEqual(record.find_text(""), ())
+
+    def test_structured_sections_match_source_record_bytes(self) -> None:
+        records_with_sections = [
+            record
+            for record in self.records
+            if record.sections or record.extended_sections
+        ]
+        if not records_with_sections:
+            self.skipTest("dataset sample did not include structured sections")
+
+        for record in records_with_sections[:25]:
+            self.assertIsNotNone(record.source)
+            assert record.source is not None
+            for section in (*record.sections, *record.extended_sections):
+                with self.subTest(
+                    record_type=record.record_type,
+                    offset=section.offset,
+                ):
+                    self.assertEqual(
+                        section.data,
+                        record.source.data[
+                            section.offset : section.offset + len(section.data)
+                        ],
+                    )
+                    self.assertIsInstance(section.text, str)
+                    self.assertIsInstance(section.clean_text, str)
 
     def test_record_type_filter_limits_raw_dataset_results(self) -> None:
         if not self.raw_records:
