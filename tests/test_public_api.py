@@ -5,7 +5,6 @@ import unittest
 
 import pysmf
 from pysmf import (
-    HeaderCatalog,
     SMFRecordTypeRegistry,
     parse_record,
     read_file,
@@ -23,11 +22,6 @@ class PublicAPITests(unittest.TestCase):
         self.assertIn("parse_record", pysmf.__all__)
         self.assertIn("read_file", pysmf.__all__)
         self.assertIn("read_structured_records", pysmf.__all__)
-
-    def test_old_header_catalog_name_remains_compatible(self) -> None:
-        self.assertIs(pysmf.HeaderCatalog, HeaderCatalog)
-        self.assertIs(HeaderCatalog, SMFRecordTypeRegistry)
-        self.assertNotIn("HeaderCatalog", pysmf.__all__)
 
     def test_smf_parser_package_is_not_public(self) -> None:
         with self.assertRaises(ModuleNotFoundError):

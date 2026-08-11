@@ -16,7 +16,7 @@ from pysmf import (
 )
 from tests.helpers import (
     ebcdic,
-    header_catalog,
+    record_type_registry,
     native_reader,
     standard_record,
     vbs_block,
@@ -91,7 +91,8 @@ class DatasetReaderTests(unittest.TestCase):
     def test_reads_dataset_records_that_are_smf_records(self) -> None:
         records = list(
             read_dataset_records(
-                [standard_record(30, subtype=2)], header_catalog=header_catalog(30)
+                [standard_record(30, subtype=2)],
+                record_type_registry=record_type_registry(30),
             )
         )
 
@@ -99,7 +100,7 @@ class DatasetReaderTests(unittest.TestCase):
         self.assertEqual(records[0].record_type, 30)
         self.assertEqual(records[0].subtype, 2)
         self.assertIsNone(records[0].rdw)
-        self.assertEqual(records[0].c_headers[0].name, "ifasmfr.h")
+        self.assertEqual(records[0].record_type_definitions[0].name, "ifasmfr.h")
 
     def test_reassembles_continuation_dataset_chunks_by_default(self) -> None:
         smf_record = standard_record(30, subtype=2, body=b"a" * 2000)
@@ -107,7 +108,7 @@ class DatasetReaderTests(unittest.TestCase):
         records = list(
             read_dataset_records(
                 [smf_record[:1408], smf_record[1408:]],
-                header_catalog=header_catalog(30),
+                record_type_registry=record_type_registry(30),
             )
         )
 
@@ -121,7 +122,9 @@ class DatasetReaderTests(unittest.TestCase):
         second = standard_record(30, subtype=3, body=b"b" * 2000)[:896]
 
         records = list(
-            read_dataset_records([first, second], header_catalog=header_catalog(30))
+            read_dataset_records(
+                [first, second], record_type_registry=record_type_registry(30)
+            )
         )
 
         self.assertEqual(records, [])
@@ -130,7 +133,9 @@ class DatasetReaderTests(unittest.TestCase):
         record = standard_record(30, subtype=2)
         chunks = [(b"\0" * 14) + record]
 
-        records = list(read_dataset_records(chunks, header_catalog=header_catalog(30)))
+        records = list(
+            read_dataset_records(chunks, record_type_registry=record_type_registry(30))
+        )
 
         self.assertEqual([record.record_type for record in records], [30])
         self.assertEqual(records[0].offset, 14)
@@ -140,7 +145,8 @@ class DatasetReaderTests(unittest.TestCase):
 
         records = list(
             read_dataset_records(
-                [false_record_candidate() + valid], header_catalog=header_catalog(30)
+                [false_record_candidate() + valid],
+                record_type_registry=record_type_registry(30),
             )
         )
 
@@ -153,7 +159,8 @@ class DatasetReaderTests(unittest.TestCase):
 
         records = list(
             read_dataset_records(
-                [false_type_0_candidate() + valid], header_catalog=header_catalog(30)
+                [false_type_0_candidate() + valid],
+                record_type_registry=record_type_registry(30),
             )
         )
 
@@ -164,7 +171,9 @@ class DatasetReaderTests(unittest.TestCase):
         valid = standard_record(30, subtype=2)
 
         records = list(
-            read_dataset_records([false + valid], header_catalog=header_catalog(1, 30))
+            read_dataset_records(
+                [false + valid], record_type_registry=record_type_registry(1, 30)
+            )
         )
 
         self.assertEqual(records, [])
@@ -173,7 +182,7 @@ class DatasetReaderTests(unittest.TestCase):
         records = list(
             read_dataset_records(
                 [incomplete_record_with_embedded_supported_candidate()],
-                header_catalog=header_catalog(1),
+                record_type_registry=record_type_registry(1),
             )
         )
 
@@ -183,7 +192,7 @@ class DatasetReaderTests(unittest.TestCase):
         records = list(
             read_dataset_records(
                 [invalid_length_with_embedded_supported_candidate()],
-                header_catalog=header_catalog(1),
+                record_type_registry=record_type_registry(1),
             )
         )
 
@@ -195,7 +204,9 @@ class DatasetReaderTests(unittest.TestCase):
 
         records = list(
             read_dataset_records(
-                [false + valid], header_catalog=header_catalog(30), system_ids={"DBRA"}
+                [false + valid],
+                record_type_registry=record_type_registry(30),
+                system_ids={"DBRA"},
             )
         )
 
@@ -205,7 +216,9 @@ class DatasetReaderTests(unittest.TestCase):
         record = standard_record(30, subtype=2, date=ebcdic("BAD "))
 
         records = list(
-            read_dataset_records([record], header_catalog=header_catalog(30))
+            read_dataset_records(
+                [record], record_type_registry=record_type_registry(30)
+            )
         )
 
         self.assertEqual(records, [])
@@ -215,7 +228,9 @@ class DatasetReaderTests(unittest.TestCase):
         dataset_record = struct.pack(">HH", len(smf_record) + 4, 0) + smf_record
 
         records = list(
-            read_dataset_records([dataset_record], header_catalog=header_catalog(14))
+            read_dataset_records(
+                [dataset_record], record_type_registry=record_type_registry(14)
+            )
         )
 
         self.assertEqual(len(records), 1)
@@ -227,7 +242,8 @@ class DatasetReaderTests(unittest.TestCase):
     def test_skips_short_dataset_records_by_default(self) -> None:
         records = list(
             read_dataset_records(
-                [b"\0\0\0\0", standard_record(30)], header_catalog=header_catalog(30)
+                [b"\0\0\0\0", standard_record(30)],
+                record_type_registry=record_type_registry(30),
             )
         )
 
@@ -241,7 +257,7 @@ class DatasetReaderTests(unittest.TestCase):
                 read_dataset_records(
                     [b"\0\0\0\0"],
                     skip_short_records=False,
-                    header_catalog=header_catalog(30),
+                    record_type_registry=record_type_registry(30),
                 )
             )
 
@@ -263,7 +279,7 @@ class DatasetReaderTests(unittest.TestCase):
                     records=10,
                     offset=3,
                     tail=True,
-                    header_catalog=header_catalog(2),
+                    record_type_registry=record_type_registry(2),
                     system_ids={"DBRA"},
                 )
             )
@@ -279,7 +295,11 @@ class DatasetReaderTests(unittest.TestCase):
             ),
             self.assertRaises(ZOAUUnsupportedDatasetError),
         ):
-            list(read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2)))
+            list(
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", record_type_registry=record_type_registry(2)
+                )
+            )
 
     def test_detects_relative_gdg_names_without_exception_parsing(self) -> None:
         self.assertTrue(dataset_module._is_relative_gdg_name("USER.SMF.UNLOAD(-1)"))
@@ -319,7 +339,7 @@ class DatasetReaderTests(unittest.TestCase):
                     records=10,
                     offset=3,
                     tail=True,
-                    header_catalog=header_catalog(2, 30),
+                    record_type_registry=record_type_registry(2, 30),
                     system_ids={"DBRA"},
                     record_types={30},
                 )
@@ -351,7 +371,7 @@ class DatasetReaderTests(unittest.TestCase):
                     records=10,
                     offset=3,
                     tail=True,
-                    header_catalog=header_catalog(2),
+                    record_type_registry=record_type_registry(2),
                 )
             )
 
@@ -369,7 +389,8 @@ class DatasetReaderTests(unittest.TestCase):
         ):
             parsed = list(
                 read_dataset(
-                    "USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)
+                    "USER.SMF.UNLOAD(-1)",
+                    record_type_registry=record_type_registry(2, 30),
                 )
             )
 
@@ -394,7 +415,8 @@ class DatasetReaderTests(unittest.TestCase):
         ):
             parsed = list(
                 read_dataset(
-                    "USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)
+                    "USER.SMF.UNLOAD(-1)",
+                    record_type_registry=record_type_registry(2, 30),
                 )
             )
 
@@ -416,7 +438,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", record_type_registry=record_type_registry(30)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [30])
@@ -438,7 +462,8 @@ class DatasetReaderTests(unittest.TestCase):
         ):
             parsed = list(
                 read_dataset(
-                    "USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(2, 30)
+                    "USER.SMF.UNLOAD(-1)",
+                    record_type_registry=record_type_registry(2, 30),
                 )
             )
 
@@ -461,7 +486,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", record_type_registry=record_type_registry(30)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [30])
@@ -484,7 +511,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", record_type_registry=record_type_registry(30)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [30])
@@ -499,7 +528,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(-1)", header_catalog=header_catalog(30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(-1)", record_type_registry=record_type_registry(30)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [30])
@@ -523,7 +554,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(80))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)", record_type_registry=record_type_registry(80)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [80])
@@ -547,7 +580,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(80))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)", record_type_registry=record_type_registry(80)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [80])
@@ -569,7 +604,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(80))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)", record_type_registry=record_type_registry(80)
+                )
             )
 
         self.assertEqual(parsed, [])
@@ -578,7 +615,7 @@ class DatasetReaderTests(unittest.TestCase):
         records = list(
             read_dataset_records(
                 [standard_record(2), standard_record(30), standard_record(80)],
-                header_catalog=header_catalog(2, 30, 80),
+                record_type_registry=record_type_registry(2, 30, 80),
                 record_types={30, 80},
             )
         )
@@ -597,7 +634,10 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)",
+                    record_type_registry=record_type_registry(2, 30),
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [30])
@@ -614,7 +654,10 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)",
+                    record_type_registry=record_type_registry(2, 30),
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [30])
@@ -629,7 +672,10 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)",
+                    record_type_registry=record_type_registry(2, 30),
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [2])
@@ -646,7 +692,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)", record_type_registry=record_type_registry(2)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [2])
@@ -665,7 +713,10 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(2, 30))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)",
+                    record_type_registry=record_type_registry(2, 30),
+                )
             )
 
         self.assertEqual(parsed, [])
@@ -689,7 +740,9 @@ class DatasetReaderTests(unittest.TestCase):
             side_effect=vbs_import_module_side_effect(fake_native),
         ):
             parsed = list(
-                read_dataset("USER.SMF.UNLOAD(0)", header_catalog=header_catalog(102))
+                read_dataset(
+                    "USER.SMF.UNLOAD(0)", record_type_registry=record_type_registry(102)
+                )
             )
 
         self.assertEqual([record.record_type for record in parsed], [102])
@@ -717,7 +770,8 @@ class DatasetReaderTests(unittest.TestCase):
         ):
             parsed = list(
                 read_dataset(
-                    "USER.SMF.UNLOAD(0)", header_catalog=header_catalog(30, 57)
+                    "USER.SMF.UNLOAD(0)",
+                    record_type_registry=record_type_registry(30, 57),
                 )
             )
 
@@ -725,9 +779,7 @@ class DatasetReaderTests(unittest.TestCase):
 
     def test_read_dataset_reports_missing_zoau(self) -> None:
         with (
-            patch(
-                "pysmf.datasets.import_module", side_effect=ImportError("no zoau")
-            ),
+            patch("pysmf.datasets.import_module", side_effect=ImportError("no zoau")),
             self.assertRaises(ZOAUMissingError),
         ):
             list(read_dataset("USER.SMF.UNLOAD"))

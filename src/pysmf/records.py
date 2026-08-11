@@ -202,7 +202,7 @@ def read_structured_records(
     source: bytes | bytearray | memoryview | str | PathLike[str] | BinaryIO,
     *,
     record_format: RecordFormat = "auto",
-    header_catalog: SMFRecordTypeRegistry | None = None,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
     errors: StructuredErrorMode = "raise",
 ) -> Iterator[StructuredSMFRecord]:
     """Read and parse structured SMF records from bytes, a path, or a stream."""
@@ -213,7 +213,7 @@ def read_structured_records(
         read_records(
             source,
             record_format=record_format,
-            header_catalog=header_catalog,
+            record_type_registry=record_type_registry,
         ),
         errors=errors,
     )
@@ -223,7 +223,7 @@ def read_structured_file(
     path: str | PathLike[str],
     *,
     record_format: RecordFormat = "auto",
-    header_catalog: SMFRecordTypeRegistry | None = None,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
     errors: StructuredErrorMode = "raise",
 ) -> Iterator[StructuredSMFRecord]:
     """Read and parse structured SMF records from an unload file path."""
@@ -231,7 +231,7 @@ def read_structured_file(
     yield from read_structured_records(
         path,
         record_format=record_format,
-        header_catalog=header_catalog,
+        record_type_registry=record_type_registry,
         errors=errors,
     )
 
@@ -241,7 +241,7 @@ def read_structured_dataset(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
-    header_catalog: SMFRecordTypeRegistry | None = None,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
     system_ids: Collection[str] | None = None,
     record_types: Collection[int] | None = None,
     records: int = 0,
@@ -258,7 +258,7 @@ def read_structured_dataset(
             dataset_name,
             record_format=record_format,
             skip_short_records=skip_short_records,
-            header_catalog=header_catalog,
+            record_type_registry=record_type_registry,
             system_ids=system_ids,
             record_types=record_types,
             records=records,
@@ -311,13 +311,6 @@ def _structured_record(
     )
 
 
-def _bytes_field(fields: dict[str, int | bytes], key: str) -> bytes:
-    value = fields[key]
-    if isinstance(value, bytes):
-        return value
-    raise TypeError(f"SMF field {key!r} is not a bytes field")
-
-
 def _clean_decoded_text(value: str) -> str:
     cleaned = "".join(
         character if character in _PRINTABLE_TEXT else " " for character in value
@@ -338,9 +331,7 @@ def _is_plausible_fixed_text(text: str) -> bool:
     return one_character_tokens * 3 <= len(tokens)
 
 
-def _text_matches(
-    text: str, value: str, *, ignore_case: bool, token: bool
-) -> bool:
+def _text_matches(text: str, value: str, *, ignore_case: bool, token: bool) -> bool:
     haystack = text.upper() if ignore_case else text
     needle = value.upper() if ignore_case else value
     if not token:
@@ -401,9 +392,7 @@ def _validate_structured_record(
         )
 
 
-def _sections(
-    fields: dict[str, object], key: str
-) -> tuple[SMFFieldSection, ...]:
+def _sections(fields: dict[str, object], key: str) -> tuple[SMFFieldSection, ...]:
     sections = fields.get(key, ())
     if not isinstance(sections, Iterable):
         raise TypeError(f"SMF section field {key!r} is not iterable")

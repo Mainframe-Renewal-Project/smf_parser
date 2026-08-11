@@ -31,7 +31,7 @@ headers.
 from pysmf import read_file
 
 for record in read_file("smf.unload"):
-    print(record.record_type, record.subtype, record.header.system_id_text, record.c_headers)
+    print(record.record_type, record.subtype, record.header.system_id_text)
 ```
 
 For most application code, use the structured readers. They read records,

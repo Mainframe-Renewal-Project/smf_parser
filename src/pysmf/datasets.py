@@ -41,7 +41,7 @@ def read_dataset(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
-    header_catalog: SMFRecordTypeRegistry | None = None,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
     system_ids: Collection[str] | None = None,
     record_types: Collection[int] | None = None,
     records: int = 0,
@@ -69,7 +69,7 @@ def read_dataset(
         )
         yield from _read_native_vbs_smf_records(
             dataset_records,
-            header_catalog=header_catalog,
+            record_type_registry=record_type_registry,
             system_ids=system_ids,
             record_types=selected_record_types,
         )
@@ -82,7 +82,7 @@ def read_dataset(
         dataset_records,
         record_format=record_format,
         skip_short_records=skip_short_records,
-        header_catalog=header_catalog,
+        record_type_registry=record_type_registry,
         system_ids=system_ids,
         record_types=selected_record_types,
     )
@@ -93,7 +93,7 @@ def read_dataset_records(
     *,
     record_format: DatasetRecordFormat = "auto",
     skip_short_records: bool = True,
-    header_catalog: SMFRecordTypeRegistry | None = None,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
     system_ids: Collection[str] | None = None,
     record_types: Collection[int] | None = None,
 ) -> Iterator[SMFRecord]:
@@ -109,7 +109,7 @@ def read_dataset_records(
     fail on them instead.
     """
 
-    catalog = _require_header_catalog(header_catalog)
+    registry = _require_record_type_registry(record_type_registry)
     selected_record_types = _normalized_record_types(record_types)
 
     if record_format in ("auto", "smf"):
@@ -117,7 +117,7 @@ def read_dataset_records(
             records,
             record_format=record_format,
             skip_short_records=skip_short_records,
-            header_catalog=catalog,
+            record_type_registry=registry,
             system_ids=system_ids,
             record_types=selected_record_types,
         )
@@ -134,7 +134,7 @@ def read_dataset_records(
         yield from _read_one_rdw_dataset_record(
             data,
             logical_offset=logical_offset,
-            header_catalog=catalog,
+            record_type_registry=registry,
             record_types=selected_record_types,
         )
         logical_offset += len(data)
@@ -240,6 +240,7 @@ def _read_native_vbs_dataset_records(
     if read_vbs_dataset is None:
         raise _unsupported_vbs_dataset_error(dataset_name, entries)
     resolved_dataset_name = _resolve_relative_gdg_name(dataset_name, entries)
+    del record_types
     kwargs: dict[str, object] = {"records": records, "offset": offset, "tail": tail}
     return read_vbs_dataset(resolved_dataset_name, **kwargs)
 
@@ -247,7 +248,7 @@ def _read_native_vbs_dataset_records(
 def _read_native_vbs_smf_records(
     records: Iterable[bytes],
     *,
-    header_catalog: SMFRecordTypeRegistry | None,
+    record_type_registry: SMFRecordTypeRegistry | None,
     system_ids: Collection[str] | None,
     record_types: frozenset[int] | None,
 ) -> Iterator[SMFRecord]:
@@ -255,7 +256,7 @@ def _read_native_vbs_smf_records(
         _iter_native_vbs_logical_records(records),
         record_format="smf",
         skip_short_records=False,
-        header_catalog=_require_header_catalog(header_catalog),
+        record_type_registry=_require_record_type_registry(record_type_registry),
         system_ids=system_ids,
         record_types=record_types,
         split_on_record_start=True,
@@ -428,9 +429,8 @@ def _vbs_segment_data_is_plausible(segment_control: int, segment_data: bytes) ->
         record_length &= 0x7FFF
     if not _MIN_SMF_RECORD_LENGTH <= record_length <= _MAX_SMF_RECORD_LENGTH:
         return False
-    return (
-        segment_control != _VBS_SEGMENT_COMPLETE
-        or record_length <= len(segment_data)
+    return segment_control != _VBS_SEGMENT_COMPLETE or record_length <= len(
+        segment_data
     )
 
 
@@ -495,7 +495,7 @@ def _read_smf_dataset_records(
     *,
     record_format: DatasetRecordFormat,
     skip_short_records: bool,
-    header_catalog: SMFRecordTypeRegistry,
+    record_type_registry: SMFRecordTypeRegistry,
     system_ids: Collection[str] | None,
     record_types: frozenset[int] | None,
     split_on_record_start: bool = True,
@@ -519,7 +519,9 @@ def _read_smf_dataset_records(
         )
         if not buffer and selected_format == "rdw":
             yield from _read_one_rdw_dataset_record(
-                data, logical_offset=logical_offset, header_catalog=header_catalog
+                data,
+                logical_offset=logical_offset,
+                record_type_registry=record_type_registry,
             )
             logical_offset += len(data)
             continue
@@ -540,7 +542,7 @@ def _read_smf_dataset_records(
             buffer,
             buffer_offset=buffer_offset,
             skip_invalid_records=skip_invalid,
-            header_catalog=header_catalog,
+            record_type_registry=record_type_registry,
             system_ids=system_ids,
             record_types=record_types,
             trusted_record_boundaries=trusted_record_boundaries,
@@ -556,7 +558,7 @@ def _drain_smf_buffer(
     *,
     buffer_offset: int,
     skip_invalid_records: bool,
-    header_catalog: SMFRecordTypeRegistry,
+    record_type_registry: SMFRecordTypeRegistry,
     system_ids: Collection[str] | None,
     record_types: frozenset[int] | None,
     trusted_record_boundaries: bool = False,
@@ -598,11 +600,13 @@ def _drain_smf_buffer(
             del buffer[:record_length]
             consumed += record_length
             continue
-        header_definitions = header_catalog.for_record_type(header.record_type)
+        record_type_definitions = record_type_registry.for_record_type(
+            header.record_type
+        )
         header_is_plausible = _is_plausible_smf_header(header, system_ids=system_ids)
-        if not header_definitions or not header_is_plausible:
+        if not record_type_definitions or not header_is_plausible:
             if not skip_invalid_records:
-                if not header_definitions:
+                if not record_type_definitions:
                     raise SMFRecordTypeSupportError(
                         "no structured support found for SMF record "
                         f"type {header.record_type}"
@@ -621,7 +625,7 @@ def _drain_smf_buffer(
             data=data,
             header=header,
             offset=header_offset,
-            header_definitions=header_definitions,
+            record_type_definitions=record_type_definitions,
         )
         del buffer[:record_length]
         consumed += record_length
@@ -689,17 +693,19 @@ def _looks_like_smf_record_start(
     )
 
 
-def _require_header_catalog(
-    header_catalog: SMFRecordTypeRegistry | None,
+def _require_record_type_registry(
+    record_type_registry: SMFRecordTypeRegistry | None,
 ) -> SMFRecordTypeRegistry:
-    catalog = (
-        SMFRecordTypeRegistry.discover() if header_catalog is None else header_catalog
+    registry = (
+        SMFRecordTypeRegistry.discover()
+        if record_type_registry is None
+        else record_type_registry
     )
-    if not catalog.headers:
+    if not registry.definitions:
         raise SMFRecordTypeSupportError(
-            f"no SMF record type support found in {catalog.include_dir}"
+            f"no SMF record type support found in {registry.include_dir}"
         )
-    return catalog
+    return registry
 
 
 def _is_plausible_identifier(
@@ -720,11 +726,11 @@ def _read_one_rdw_dataset_record(
     data: bytes,
     *,
     logical_offset: int,
-    header_catalog: SMFRecordTypeRegistry,
+    record_type_registry: SMFRecordTypeRegistry,
     record_types: frozenset[int] | None = None,
 ) -> Iterator[SMFRecord]:
     for record in read_records(
-        data, record_format="rdw", header_catalog=header_catalog
+        data, record_format="rdw", record_type_registry=record_type_registry
     ):
         if record_types is not None and record.record_type not in record_types:
             continue
@@ -738,5 +744,5 @@ def _read_one_rdw_dataset_record(
             )
             if record.rdw is not None
             else None,
-            header_definitions=record.header_definitions,
+            record_type_definitions=record.record_type_definitions,
         )

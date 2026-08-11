@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from .datasets import read_dataset, read_dataset_records
 from .errors import (
-    HeaderCatalogError,
     SMFError,
     SMFParseError,
     SMFRecordTypeSupportError,
@@ -13,8 +12,6 @@ from .errors import (
     ZOAUUnsupportedDatasetError,
 )
 from .headers import (
-    HeaderCatalog,
-    HeaderDefinition,
     SMFRecordTypeDefinition,
     SMFRecordTypeRegistry,
     default_include_dir,

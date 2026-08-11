@@ -27,30 +27,34 @@ class SMFRecordTypeRegistry:
     """Index of SMF record types supported by this build."""
 
     include_dir: Path
-    headers: tuple[SMFRecordTypeDefinition, ...]
-    _headers_by_name: Mapping[str, SMFRecordTypeDefinition] = field(
+    definitions: tuple[SMFRecordTypeDefinition, ...]
+    _definitions_by_name: Mapping[str, SMFRecordTypeDefinition] = field(
         init=False, repr=False, compare=False
     )
-    _headers_by_record_type: Mapping[int, tuple[SMFRecordTypeDefinition, ...]] = field(
-        init=False, repr=False, compare=False
+    _definitions_by_record_type: Mapping[int, tuple[SMFRecordTypeDefinition, ...]] = (
+        field(init=False, repr=False, compare=False)
     )
 
     def __post_init__(self) -> None:
-        headers_by_name: dict[str, SMFRecordTypeDefinition] = {}
-        headers_by_record_type: dict[int, list[SMFRecordTypeDefinition]] = {}
-        for header in self.headers:
-            for name in _normalized_header_names(header.name, header.path.name):
-                headers_by_name.setdefault(name, header)
-            for record_type in header.record_types:
-                headers_by_record_type.setdefault(record_type, []).append(header)
-        object.__setattr__(self, "_headers_by_name", MappingProxyType(headers_by_name))
+        definitions_by_name: dict[str, SMFRecordTypeDefinition] = {}
+        definitions_by_record_type: dict[int, list[SMFRecordTypeDefinition]] = {}
+        for definition in self.definitions:
+            for name in _normalized_header_names(definition.name, definition.path.name):
+                definitions_by_name.setdefault(name, definition)
+            for record_type in definition.record_types:
+                definitions_by_record_type.setdefault(record_type, []).append(
+                    definition
+                )
+        object.__setattr__(
+            self, "_definitions_by_name", MappingProxyType(definitions_by_name)
+        )
         object.__setattr__(
             self,
-            "_headers_by_record_type",
+            "_definitions_by_record_type",
             MappingProxyType(
                 {
-                    record_type: tuple(headers)
-                    for record_type, headers in headers_by_record_type.items()
+                    record_type: tuple(definitions)
+                    for record_type, definitions in definitions_by_record_type.items()
                 }
             ),
         )
@@ -66,24 +70,16 @@ class SMFRecordTypeRegistry:
             )
         if not definitions:
             raise SMFRecordTypeSupportError(f"no z/OS C headers found in {root}")
-        return cls(include_dir=root, headers=definitions)
-
-    @property
-    def definitions(self) -> tuple[SMFRecordTypeDefinition, ...]:
-        return self.headers
+        return cls(include_dir=root, definitions=definitions)
 
     def by_name(self, name: str) -> SMFRecordTypeDefinition | None:
         for normalized in _normalized_header_names(name):
-            if header := self._headers_by_name.get(normalized):
-                return header
+            if definition := self._definitions_by_name.get(normalized):
+                return definition
         return None
 
     def for_record_type(self, record_type: int) -> tuple[SMFRecordTypeDefinition, ...]:
-        return self._headers_by_record_type.get(record_type, ())
-
-
-HeaderDefinition = SMFRecordTypeDefinition
-HeaderCatalog = SMFRecordTypeRegistry
+        return self._definitions_by_record_type.get(record_type, ())
 
 
 def default_include_dir() -> Path:

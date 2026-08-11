@@ -61,11 +61,11 @@ def vbs_segment_word(control: int, data: bytes) -> bytes:
     return struct.pack(">HH", len(data) + 4, control) + data
 
 
-def header_catalog(*record_types: int) -> SMFRecordTypeRegistry:
+def record_type_registry(*record_types: int) -> SMFRecordTypeRegistry:
     include_dir = Path("/compiled/zos")
     return SMFRecordTypeRegistry(
         include_dir=include_dir,
-        headers=(
+        definitions=(
             SMFRecordTypeDefinition(
                 name="ifasmfr.h",
                 path=include_dir / "ifasmfr.h",
@@ -76,12 +76,14 @@ def header_catalog(*record_types: int) -> SMFRecordTypeRegistry:
     )
 
 
-def fail_read_as_bytes(*_args, **_kwargs) -> None:
+def fail_read_as_bytes(*args, **kwargs) -> None:
+    del args, kwargs
     raise AssertionError("read_as_bytes should not be called for VBS datasets")
 
 
 def native_reader(records: list[bytes]) -> SimpleNamespace:
-    def read_vbs_dataset(_dataset_name: str, **_kwargs) -> list[bytes]:
+    def read_vbs_dataset(dataset_name: str, **kwargs) -> list[bytes]:
+        del dataset_name, kwargs
         return records
 
     return SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
@@ -92,8 +94,12 @@ def vbs_import_module_side_effect(
     *,
     generation_count: int = 1,
 ):
+    def list_datasets(pattern: str) -> list[object]:
+        del pattern
+        return []
+
     fake_datasets = SimpleNamespace(
-        list_datasets=lambda _pattern: [],
+        list_datasets=list_datasets,
         read_as_bytes=fail_read_as_bytes,
     )
     fake_gdgs = SimpleNamespace(

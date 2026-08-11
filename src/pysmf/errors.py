@@ -25,9 +25,6 @@ class SMFRecordTypeSupportError(SMFError):
     """Raised when SMF record type support is unavailable or incomplete."""
 
 
-HeaderCatalogError = SMFRecordTypeSupportError
-
-
 class ZOAUMissingError(SMFError):
     """Raised when a ZOAU-only API is used without ZOAU installed."""
 

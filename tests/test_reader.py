@@ -8,8 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from pysmf import (
-    HeaderCatalog,
-    HeaderDefinition,
     SMFParseError,
     SMFRecordTypeDefinition,
     SMFRecordTypeRegistry,
@@ -81,11 +79,11 @@ def extended_v2_record(
     return standard_header + extended_header + body
 
 
-def header_catalog(*record_types: int) -> SMFRecordTypeRegistry:
+def record_type_registry(*record_types: int) -> SMFRecordTypeRegistry:
     include_dir = Path("/compiled/zos")
     return SMFRecordTypeRegistry(
         include_dir=include_dir,
-        headers=(
+        definitions=(
             SMFRecordTypeDefinition(
                 name="ifasmfr.h",
                 path=include_dir / "ifasmfr.h",
@@ -190,7 +188,11 @@ class ReaderTests(unittest.TestCase):
     def test_decode_smf_time_uses_native_helper_when_available(self) -> None:
         from pysmf import reader
 
-        native = SimpleNamespace(decode_smf_time_hundredths=lambda data: 42)
+        def decode_smf_time_hundredths(data: bytes) -> int:
+            self.assertEqual(data, b"\0\0\0\0")
+            return 42
+
+        native = SimpleNamespace(decode_smf_time_hundredths=decode_smf_time_hundredths)
 
         with patch.object(reader, "_native", native):
             self.assertEqual(reader.decode_smf_time_hundredths(b"\0\0\0\0"), 42)
@@ -220,37 +222,50 @@ class ReaderTests(unittest.TestCase):
         second = standard_record(30, subtype=4, body=b"abc")
 
         records = list(
-            read_records(first + second, header_catalog=header_catalog(2, 30))
+            read_records(
+                first + second, record_type_registry=record_type_registry(2, 30)
+            )
         )
 
         self.assertEqual([record.record_type for record in records], [2, 30])
         self.assertEqual(records[1].body, b"abc")
         self.assertIsNone(records[0].rdw)
-        self.assertEqual(records[1].c_headers[0].name, "ifasmfr.h")
+        self.assertEqual(records[1].record_type_definitions[0].name, "ifasmfr.h")
 
     def test_read_auto_external_rdw_records(self) -> None:
         record = standard_record(14, body=b"data")
         stream = struct.pack(">HH", len(record) + 4, 0) + record
 
-        records = list(read_records(BytesIO(stream), header_catalog=header_catalog(14)))
+        records = list(
+            read_records(BytesIO(stream), record_type_registry=record_type_registry(14))
+        )
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].record_type, 14)
         self.assertEqual(records[0].offset, 4)
-        self.assertIsNotNone(records[0].rdw)
-        self.assertEqual(records[0].rdw.length, len(record) + 4)
+        rdw = records[0].rdw
+        assert rdw is not None
+        self.assertEqual(rdw.length, len(record) + 4)
 
     def test_reject_invalid_record_length(self) -> None:
         with self.assertRaises(SMFParseError):
-            list(read_records(b"\0\x01\0\0", header_catalog=header_catalog(2)))
+            list(
+                read_records(
+                    b"\0\x01\0\0", record_type_registry=record_type_registry(2)
+                )
+            )
 
     def test_rejects_records_without_matching_c_header(self) -> None:
         with self.assertRaises(SMFRecordTypeSupportError):
-            list(read_records(standard_record(30), header_catalog=header_catalog(2)))
+            list(
+                read_records(
+                    standard_record(30), record_type_registry=record_type_registry(2)
+                )
+            )
 
 
 class SMFRecordTypeRegistryTests(unittest.TestCase):
-    def test_discovers_retained_c_headers(self) -> None:
+    def test_discovers_retained_record_type_definitions(self) -> None:
         include_dir = Path("/compiled/zos")
         definition = SMFRecordTypeDefinition(
             name="ifasmfh.h",
@@ -273,8 +288,8 @@ class SMFRecordTypeRegistryTests(unittest.TestCase):
         include_dir = Path("/usr/include/IBM")
         catalog = SMFRecordTypeRegistry(
             include_dir=include_dir,
-            headers=(
-            SMFRecordTypeDefinition(
+            definitions=(
+                SMFRecordTypeDefinition(
                     name="ifasmfr.h",
                     path=include_dir / "IFASMFR",
                     record_types=(),
@@ -287,12 +302,12 @@ class SMFRecordTypeRegistryTests(unittest.TestCase):
         self.assertIsNotNone(catalog.by_name("ifasmfr.h"))
         self.assertIsNotNone(catalog.by_name("IFASMFR"))
 
-    def test_generic_headers_do_not_match_every_record_type(self) -> None:
+    def test_generic_definitions_do_not_match_every_record_type(self) -> None:
         include_dir = Path("/compiled/zos")
         catalog = SMFRecordTypeRegistry(
             include_dir=include_dir,
-            headers=(
-            SMFRecordTypeDefinition(
+            definitions=(
+                SMFRecordTypeDefinition(
                     name="ifasmfh.h",
                     path=include_dir / "ifasmfh.h",
                     record_types=(),
@@ -311,10 +326,6 @@ class SMFRecordTypeRegistryTests(unittest.TestCase):
         self.assertEqual(
             tuple(header.name for header in catalog.for_record_type(1)), ("ifasmfr1.h",)
         )
-
-    def test_old_header_names_remain_compatible(self) -> None:
-        self.assertIs(HeaderCatalog, SMFRecordTypeRegistry)
-        self.assertIs(HeaderDefinition, SMFRecordTypeDefinition)
 
 
 if __name__ == "__main__":

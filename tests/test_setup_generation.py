@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import importlib.util
 import types
 import unittest
 from pathlib import Path
@@ -26,13 +24,20 @@ def setup_module():
     )
     module = types.SimpleNamespace(__file__=str(setup_path))
     namespace = module.__dict__
+
+    def setup_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    def customize_compiler_noop(compiler) -> None:
+        del compiler
+
     namespace.update(
         {
             "Extension": lambda *args, **kwargs: (args, kwargs),
-            "setup": lambda *args, **kwargs: None,
+            "setup": setup_noop,
             "CompileError": Exception,
             "new_compiler": lambda: None,
-            "customize_compiler": lambda _compiler: None,
+            "customize_compiler": customize_compiler_noop,
             "get_platform": lambda: "test-platform",
             "build_ext_base": object,
             "build_py_base": object,
@@ -147,7 +152,9 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("return appended", variable_parser)
         self.assertIn("section_count > 4096", variable_parser)
         self.assertIn("return 0", variable_parser)
-        self.assertIn("SMF variable section length is outside the record", variable_parser)
+        self.assertIn(
+            "SMF variable section length is outside the record", variable_parser
+        )
 
     def test_native_section_directory_can_use_header_anchor_without_count(
         self,
@@ -157,11 +164,23 @@ class SetupGenerationTests(unittest.TestCase):
             native, "append_self_defining_section_directory"
         )
 
-        self.assertIn("count = ((unsigned long long)record_length - directory) / 6", directory_parser)
+        self.assertIn(
+            "count = ((unsigned long long)record_length - directory) / 6",
+            directory_parser,
+        )
         self.assertIn("directory + (index * 6)", directory_parser)
-        self.assertIn("section_offset = read_unsigned_be(data + entry_offset, 2)", directory_parser)
-        self.assertIn("section_length = read_unsigned_be(data + entry_offset + 2, 2)", directory_parser)
-        self.assertIn("section_count = read_unsigned_be(data + entry_offset + 4, 2)", directory_parser)
+        self.assertIn(
+            "section_offset = read_unsigned_be(data + entry_offset, 2)",
+            directory_parser,
+        )
+        self.assertIn(
+            "section_length = read_unsigned_be(data + entry_offset + 2, 2)",
+            directory_parser,
+        )
+        self.assertIn(
+            "section_count = read_unsigned_be(data + entry_offset + 4, 2)",
+            directory_parser,
+        )
         self.assertIn("inferred_count = 1", directory_parser)
         self.assertIn(
             "if (triplet_sections == 0 && (inferred_count || appended > 0))",
@@ -202,9 +221,7 @@ class SetupGenerationTests(unittest.TestCase):
 """
         )
 
-        self.assertEqual(
-            [field["name"] for field in fields], ["smf21len", "smf21rty"]
-        )
+        self.assertEqual([field["name"] for field in fields], ["smf21len", "smf21rty"])
         self.assertEqual([field["offset"] for field in fields], [0, 2])
 
     def test_record_fields_use_first_top_level_union_member(self) -> None:
@@ -222,9 +239,7 @@ class SetupGenerationTests(unittest.TestCase):
 """
         )
 
-        self.assertEqual(
-            [field["name"] for field in fields], ["smf21hdr", "trailing"]
-        )
+        self.assertEqual([field["name"] for field in fields], ["smf21hdr", "trailing"])
         self.assertEqual([field["offset"] for field in fields], [0, 104])
 
     def test_record_struct_names_include_common_ibm_variants(self) -> None:

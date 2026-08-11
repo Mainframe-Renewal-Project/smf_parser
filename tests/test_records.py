@@ -12,7 +12,7 @@ from pysmf import (
     parse_records,
     read_structured_records,
 )
-from tests.helpers import ebcdic, header_catalog, standard_record
+from tests.helpers import ebcdic, record_type_registry, standard_record
 
 
 def native_type80_fields() -> dict[str, object]:
@@ -75,9 +75,11 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_uses_generated_native_parser(self) -> None:
         from pysmf import records
 
-        native = SimpleNamespace(
-            parse_record=lambda record_type, data: native_type80_fields()
-        )
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
 
         with patch.object(records, "_native", native):
             parsed = parse_record(standard_record(80))
@@ -98,9 +100,11 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_exposes_decoded_text_helpers(self) -> None:
         from pysmf import records
 
-        native = SimpleNamespace(
-            parse_record=lambda record_type, data: native_type80_fields()
-        )
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
 
         with patch.object(records, "_native", native):
             parsed = parse_record(standard_record(80))
@@ -116,9 +120,11 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_can_find_decoded_user_tokens(self) -> None:
         from pysmf import records
 
-        native = SimpleNamespace(
-            parse_record=lambda record_type, data: native_type80_fields()
-        )
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
 
         with patch.object(records, "_native", native):
             parsed = parse_record(standard_record(80))
@@ -132,9 +138,11 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_exposes_decoded_tokens(self) -> None:
         from pysmf import records
 
-        native = SimpleNamespace(
-            parse_record=lambda record_type, data: native_type80_fields()
-        )
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
 
         with patch.object(records, "_native", native):
             parsed = parse_record(standard_record(80))
@@ -149,9 +157,11 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_exposes_smf80_relocation_sections(self) -> None:
         from pysmf import records
 
-        native = SimpleNamespace(
-            parse_record=lambda record_type, data: native_type80_fields()
-        )
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
 
         with patch.object(records, "_native", native):
             parsed = parse_record(standard_record(80))
@@ -170,7 +180,8 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_records_can_skip_unsupported_records(self) -> None:
         from pysmf import records
 
-        def parse_native_record(record_type: int, _data: bytes) -> dict[str, object]:
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del data
             if record_type == 80:
                 return native_type80_fields()
             raise NotImplementedError("unsupported SMF type")
@@ -194,14 +205,18 @@ class StructuredRecordTests(unittest.TestCase):
     def test_read_structured_records_reads_and_parses_records(self) -> None:
         from pysmf import records
 
-        native = SimpleNamespace(
-            parse_record=lambda _record_type, _data: native_type80_fields()
-        )
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        native = SimpleNamespace(parse_record=parse_native_record)
         source = BytesIO(standard_record(80))
 
         with patch.object(records, "_native", native):
             parsed = tuple(
-                read_structured_records(source, header_catalog=header_catalog(80))
+                read_structured_records(
+                    source, record_type_registry=record_type_registry(80)
+                )
             )
 
         self.assertEqual(len(parsed), 1)
@@ -224,7 +239,8 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_reports_missing_structured_parser(self) -> None:
         from pysmf import records
 
-        def parse_record_error(_record_type: int, _data: bytes) -> object:
+        def parse_record_error(record_type: int, data: bytes) -> object:
+            del record_type, data
             raise NotImplementedError("unsupported SMF type")
 
         native = SimpleNamespace(parse_record=parse_record_error)
@@ -236,7 +252,8 @@ class StructuredRecordTests(unittest.TestCase):
     def test_parse_record_maps_native_validation_errors(self) -> None:
         from pysmf import records
 
-        def parse_record_error(_record_type: int, _data: bytes) -> object:
+        def parse_record_error(record_type: int, data: bytes) -> object:
+            del record_type, data
             raise ValueError("expected SMF record type 80")
 
         native = SimpleNamespace(parse_record=parse_record_error)
@@ -250,7 +267,12 @@ class StructuredRecordTests(unittest.TestCase):
 
         fields = native_type80_fields()
         fields["smf80rty"] = 0
-        native = SimpleNamespace(parse_record=lambda _record_type, _data: fields)
+
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return fields
+
+        native = SimpleNamespace(parse_record=parse_native_record)
 
         with patch.object(records, "_native", native):
             with self.assertRaises(SMFParseError):
