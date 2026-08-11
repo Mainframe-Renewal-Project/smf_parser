@@ -829,7 +829,11 @@ class ZOSSmokeTests(unittest.TestCase):
                 self.assertEqual(record.fields["SMF119HDType"], 119)
                 if record.subtype is not None:
                     self.assertEqual(record.fields["SMF119HDSubType"], record.subtype)
-                for field_name in ("SMF119HDLength", "SMF119HDTime", "SMF119HDDate"):
+                self.assertEqual(
+                    normalized_field_length(record.fields["SMF119HDLength"]),
+                    record.header.length if record.header is not None else None,
+                )
+                for field_name in ("SMF119HDTime", "SMF119HDDate"):
                     assert_non_negative_int_field(self, record, field_name)
 
                 if "SMF119SD_TRN" in record.fields:
