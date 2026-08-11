@@ -117,6 +117,57 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertIn("PERMIT", decoded)
         self.assertNotIn("smf80bin", parsed.decoded_fields())
 
+    def test_decoded_text_helpers_use_native_extension_when_available(self) -> None:
+        from pysmf import records
+
+        calls: list[str] = []
+
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            return native_type80_fields()
+
+        def clean_decoded_text(value: str) -> str:
+            calls.append("clean")
+            return " ".join(value.strip().split())
+
+        def clean_ebcdic_text(data: bytes) -> str:
+            calls.append("ebcdic")
+            del data
+            return "USER123"
+
+        def decoded_tokens(
+            text: str, *, min_length: int = 2, max_length: int = 64
+        ) -> tuple[str, ...]:
+            calls.append("tokens")
+            del min_length, max_length
+            return (text.upper(),)
+
+        def text_matches(
+            text: str, value: str, *, ignore_case: bool = True, token: bool = False
+        ) -> bool:
+            calls.append("matches")
+            del ignore_case, token
+            return value.upper() in text.upper()
+
+        native = SimpleNamespace(
+            parse_record=parse_native_record,
+            clean_decoded_text=clean_decoded_text,
+            clean_ebcdic_text=clean_ebcdic_text,
+            decoded_tokens=decoded_tokens,
+            text_matches=text_matches,
+        )
+
+        with patch.object(records, "_native", native):
+            parsed = parse_record(standard_record(80))
+            parsed.clean_field_text("smf80usr")
+            parsed.decoded_tokens()
+            parsed.find_text("USER123")
+
+        self.assertIn("ebcdic", calls)
+        self.assertIn("clean", calls)
+        self.assertIn("tokens", calls)
+        self.assertIn("matches", calls)
+
     def test_parse_record_can_find_decoded_user_tokens(self) -> None:
         from pysmf import records
 

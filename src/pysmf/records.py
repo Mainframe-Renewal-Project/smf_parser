@@ -40,7 +40,7 @@ class SMFFieldSection:
 
     @property
     def clean_text(self) -> str:
-        return _clean_decoded_text(self.text)
+        return _clean_ebcdic_text(self.data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,7 +294,7 @@ def _structured_record(
             continue
         if isinstance(value, bytes):
             raw_fields[key] = value
-            text = _clean_decoded_text(decode_ebcdic(value))
+            text = _clean_ebcdic_text(value)
             scalar_fields[key] = text if _is_plausible_fixed_text(text) else value
         elif isinstance(value, int):
             scalar_fields[key] = value
@@ -312,6 +312,9 @@ def _structured_record(
 
 
 def _clean_decoded_text(value: str) -> str:
+    clean_native = getattr(_native, "clean_decoded_text", None)
+    if clean_native is not None:
+        return clean_native(value)
     cleaned = "".join(
         character if character in _PRINTABLE_TEXT else " " for character in value
     )
@@ -319,6 +322,13 @@ def _clean_decoded_text(value: str) -> str:
     if len(text) < 2:
         return ""
     return text
+
+
+def _clean_ebcdic_text(value: bytes) -> str:
+    clean_native = getattr(_native, "clean_ebcdic_text", None)
+    if clean_native is not None:
+        return clean_native(value)
+    return _clean_decoded_text(decode_ebcdic(value))
 
 
 def _is_plausible_fixed_text(text: str) -> bool:
@@ -332,6 +342,16 @@ def _is_plausible_fixed_text(text: str) -> bool:
 
 
 def _text_matches(text: str, value: str, *, ignore_case: bool, token: bool) -> bool:
+    text_matches_native = getattr(_native, "text_matches", None)
+    if text_matches_native is not None:
+        return bool(
+            text_matches_native(
+                text,
+                value,
+                ignore_case=ignore_case,
+                token=token,
+            )
+        )
     haystack = text.upper() if ignore_case else text
     needle = value.upper() if ignore_case else value
     if not token:
@@ -356,6 +376,9 @@ def _text_matches(text: str, value: str, *, ignore_case: bool, token: bool) -> b
 
 
 def _decoded_tokens(text: str, *, min_length: int, max_length: int) -> tuple[str, ...]:
+    decoded_tokens_native = getattr(_native, "decoded_tokens", None)
+    if decoded_tokens_native is not None:
+        return decoded_tokens_native(text, min_length=min_length, max_length=max_length)
     tokens: list[str] = []
     current: list[str] = []
     for character in text.upper():

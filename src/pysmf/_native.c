@@ -2,6 +2,9 @@
 
 #include <Python.h>
 #include <errno.h>
+#ifdef __MVS__
+#include <iconv.h>
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +23,141 @@
 #define VBS_MAX_LOGICAL_RECORD_LENGTH 32760
 
 PyObject *generated_parse_record(PyObject *self, PyObject *args);
+
+static int is_printable_text(Py_UCS4 character) {
+    return (
+        (character >= 'A' && character <= 'Z') ||
+        (character >= 'a' && character <= 'z') ||
+        (character >= '0' && character <= '9') ||
+        character == ' ' || character == '#' || character == '$' ||
+        character == '@' || character == '.' || character == '_' ||
+        character == '-' || character == '/' || character == '(' ||
+        character == ')' || character == ':' || character == ','
+    );
+}
+
+static int is_token_character(char character) {
+    return (
+        (character >= 'A' && character <= 'Z') ||
+        (character >= '0' && character <= '9') ||
+        character == '#' || character == '$' || character == '@'
+    );
+}
+
+static char normalized_ascii(Py_UCS4 character, int ignore_case) {
+    if (ignore_case && character >= 'a' && character <= 'z') {
+        character -= 32;
+    }
+    if (character > 127) {
+        return '\0';
+    }
+    return (char)character;
+}
+
+static Py_ssize_t trimmed_ebcdic_length(const unsigned char *data, Py_ssize_t length) {
+    while (length > 0) {
+        unsigned char last = data[length - 1];
+        if (last != 0x40 && last != 0x00) {
+            break;
+        }
+        length--;
+    }
+    return length;
+}
+
+#ifdef __MVS__
+static const char *iconv_source_encoding(const char *encoding) {
+    if (strcmp(encoding, "cp1047") == 0 || strcmp(encoding, "CP1047") == 0) {
+        return "IBM-1047";
+    }
+    return encoding;
+}
+
+static PyObject *decode_ebcdic_iconv(const unsigned char *data, Py_ssize_t length, const char *encoding) {
+    iconv_t converter;
+    char *input;
+    char *input_position;
+    size_t input_remaining;
+    size_t output_capacity;
+    size_t output_remaining;
+    char *output;
+    char *output_position;
+    PyObject *decoded;
+
+    converter = iconv_open("UTF-8", iconv_source_encoding(encoding));
+    if (converter == (iconv_t)-1) {
+        PyErr_SetFromErrno(PyExc_UnicodeError);
+        return NULL;
+    }
+
+    output_capacity = (size_t)(length == 0 ? 1 : length * 4 + 4);
+    output = PyMem_New(char, output_capacity);
+    if (output == NULL) {
+        iconv_close(converter);
+        return PyErr_NoMemory();
+    }
+
+    input = (char *)data;
+    input_position = input;
+    input_remaining = (size_t)length;
+    output_position = output;
+    output_remaining = output_capacity;
+
+    while (iconv(converter, &input_position, &input_remaining, &output_position, &output_remaining) == (size_t)-1) {
+        if (errno == E2BIG) {
+            size_t used = (size_t)(output_position - output);
+            char *resized;
+            output_capacity *= 2;
+            resized = PyMem_Realloc(output, output_capacity);
+            if (resized == NULL) {
+                PyMem_Free(output);
+                iconv_close(converter);
+                return PyErr_NoMemory();
+            }
+            output = resized;
+            output_position = output + used;
+            output_remaining = output_capacity - used;
+            continue;
+        }
+        /* Match Python's errors="replace" behavior for undecodable bytes. */
+        if (output_remaining < 3) {
+            size_t used = (size_t)(output_position - output);
+            char *resized;
+            output_capacity *= 2;
+            resized = PyMem_Realloc(output, output_capacity);
+            if (resized == NULL) {
+                PyMem_Free(output);
+                iconv_close(converter);
+                return PyErr_NoMemory();
+            }
+            output = resized;
+            output_position = output + used;
+            output_remaining = output_capacity - used;
+        }
+        *output_position++ = (char)0xEF;
+        *output_position++ = (char)0xBF;
+        *output_position++ = (char)0xBD;
+        output_remaining -= 3;
+        input_position++;
+        input_remaining--;
+    }
+
+    decoded = PyUnicode_DecodeUTF8(output, (Py_ssize_t)(output_position - output), "replace");
+    PyMem_Free(output);
+    if (iconv_close(converter) != 0 && decoded == NULL) {
+        return PyErr_SetFromErrno(PyExc_UnicodeError);
+    }
+    return decoded;
+}
+#endif
+
+static PyObject *decode_ebcdic_text(const unsigned char *data, Py_ssize_t length, const char *encoding) {
+#ifdef __MVS__
+    return decode_ebcdic_iconv(data, length, encoding);
+#else
+    return PyUnicode_Decode((const char *)data, length, encoding, "replace");
+#endif
+}
 
 int set_long(PyObject *dict, const char *key, long long value) {
     PyObject *object = PyLong_FromLongLong(value);
@@ -475,6 +613,212 @@ static PyObject *py_is_packed_smf_date(PyObject *self, PyObject *args) {
     Py_RETURN_FALSE;
 }
 
+static PyObject *clean_decoded_text_object(PyObject *text) {
+    Py_ssize_t length;
+    Py_ssize_t index;
+    Py_ssize_t output_length = 0;
+    int pending_space = 0;
+    char *output;
+    PyObject *result;
+
+    if (PyUnicode_READY(text) < 0) {
+        return NULL;
+    }
+
+    length = PyUnicode_GET_LENGTH(text);
+    output = PyMem_New(char, length == 0 ? 1 : length);
+    if (output == NULL) {
+        return PyErr_NoMemory();
+    }
+
+    for (index = 0; index < length; index++) {
+        Py_UCS4 character = PyUnicode_READ_CHAR(text, index);
+        char output_character = is_printable_text(character) ? (char)character : ' ';
+        if (output_character == ' ') {
+            if (output_length > 0) {
+                pending_space = 1;
+            }
+            continue;
+        }
+        if (pending_space) {
+            output[output_length++] = ' ';
+            pending_space = 0;
+        }
+        output[output_length++] = output_character;
+    }
+
+    if (output_length < 2) {
+        PyMem_Free(output);
+        return PyUnicode_FromStringAndSize("", 0);
+    }
+    result = PyUnicode_FromStringAndSize(output, output_length);
+    PyMem_Free(output);
+    return result;
+}
+
+static PyObject *py_clean_decoded_text(PyObject *self, PyObject *args) {
+    PyObject *text;
+
+    if (!PyArg_ParseTuple(args, "U", &text)) {
+        return NULL;
+    }
+    return clean_decoded_text_object(text);
+}
+
+static PyObject *py_clean_ebcdic_text(PyObject *self, PyObject *args, PyObject *kwargs) {
+    static char *keywords[] = {"data", "encoding", NULL};
+    Py_buffer view;
+    const char *encoding = "cp1047";
+    Py_ssize_t length;
+    PyObject *decoded;
+    PyObject *cleaned;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "y*|s", keywords, &view, &encoding)) {
+        return NULL;
+    }
+
+    length = trimmed_ebcdic_length((const unsigned char *)view.buf, view.len);
+    decoded = decode_ebcdic_text((const unsigned char *)view.buf, length, encoding);
+    PyBuffer_Release(&view);
+    if (decoded == NULL) {
+        return NULL;
+    }
+    cleaned = clean_decoded_text_object(decoded);
+    Py_DECREF(decoded);
+    return cleaned;
+}
+
+static PyObject *py_decoded_tokens(PyObject *self, PyObject *args, PyObject *kwargs) {
+    static char *keywords[] = {"text", "min_length", "max_length", NULL};
+    PyObject *text;
+    PyObject *tokens;
+    Py_ssize_t length;
+    Py_ssize_t index;
+    Py_ssize_t token_length = 0;
+    int min_length = 2;
+    int max_length = 64;
+    char *token;
+    PyObject *result;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "U|ii", keywords, &text, &min_length, &max_length)) {
+        return NULL;
+    }
+    if (min_length < 0 || max_length < min_length) {
+        PyErr_SetString(PyExc_ValueError, "token length bounds are invalid");
+        return NULL;
+    }
+    if (PyUnicode_READY(text) < 0) {
+        return NULL;
+    }
+
+    length = PyUnicode_GET_LENGTH(text);
+    tokens = PyList_New(0);
+    if (tokens == NULL) {
+        return NULL;
+    }
+    token = PyMem_New(char, length == 0 ? 1 : length);
+    if (token == NULL) {
+        Py_DECREF(tokens);
+        return PyErr_NoMemory();
+    }
+
+    for (index = 0; index <= length; index++) {
+        char character = '\0';
+        if (index < length) {
+            character = normalized_ascii(PyUnicode_READ_CHAR(text, index), 1);
+        }
+        if (character != '\0' && is_token_character(character)) {
+            token[token_length++] = character;
+            continue;
+        }
+        if (token_length >= min_length && token_length <= max_length) {
+            PyObject *token_object = PyUnicode_FromStringAndSize(token, token_length);
+            if (token_object == NULL || PyList_Append(tokens, token_object) < 0) {
+                Py_XDECREF(token_object);
+                PyMem_Free(token);
+                Py_DECREF(tokens);
+                return NULL;
+            }
+            Py_DECREF(token_object);
+        }
+        token_length = 0;
+    }
+
+    PyMem_Free(token);
+    result = PyList_AsTuple(tokens);
+    Py_DECREF(tokens);
+    return result;
+}
+
+static PyObject *py_text_matches(PyObject *self, PyObject *args, PyObject *kwargs) {
+    static char *keywords[] = {"text", "value", "ignore_case", "token", NULL};
+    PyObject *text;
+    PyObject *value;
+    Py_ssize_t text_length;
+    Py_ssize_t value_length;
+    Py_ssize_t index;
+    Py_ssize_t value_index;
+    int ignore_case = 1;
+    int token = 0;
+    char *haystack;
+    char *needle;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "UU|pp", keywords, &text, &value, &ignore_case, &token)) {
+        return NULL;
+    }
+    if (PyUnicode_READY(text) < 0 || PyUnicode_READY(value) < 0) {
+        return NULL;
+    }
+    text_length = PyUnicode_GET_LENGTH(text);
+    value_length = PyUnicode_GET_LENGTH(value);
+    if (value_length == 0 || value_length > text_length) {
+        Py_RETURN_FALSE;
+    }
+
+    haystack = PyMem_New(char, text_length);
+    needle = PyMem_New(char, value_length);
+    if (haystack == NULL || needle == NULL) {
+        PyMem_Free(haystack);
+        PyMem_Free(needle);
+        return PyErr_NoMemory();
+    }
+    for (index = 0; index < text_length; index++) {
+        haystack[index] = normalized_ascii(PyUnicode_READ_CHAR(text, index), ignore_case);
+    }
+    for (index = 0; index < value_length; index++) {
+        needle[index] = normalized_ascii(PyUnicode_READ_CHAR(value, index), ignore_case);
+    }
+
+    for (index = 0; index <= text_length - value_length; index++) {
+        int matched = 1;
+        for (value_index = 0; value_index < value_length; value_index++) {
+            if (haystack[index + value_index] != needle[value_index]) {
+                matched = 0;
+                break;
+            }
+        }
+        if (!matched) {
+            continue;
+        }
+        if (token) {
+            Py_ssize_t before_index = index - 1;
+            Py_ssize_t after_index = index + value_length;
+            int before_ok = before_index < 0 || !is_token_character(haystack[before_index]);
+            int after_ok = after_index >= text_length || !is_token_character(haystack[after_index]);
+            if (!before_ok || !after_ok) {
+                continue;
+            }
+        }
+        PyMem_Free(haystack);
+        PyMem_Free(needle);
+        Py_RETURN_TRUE;
+    }
+
+    PyMem_Free(haystack);
+    PyMem_Free(needle);
+    Py_RETURN_FALSE;
+}
+
 static PyObject *read_vbs_dataset(PyObject *self, PyObject *args, PyObject *kwargs) {
 #ifdef __MVS__
     static char *keywords[] = {"dataset_name", "records", "offset", "tail", "record_types", NULL};
@@ -603,6 +947,10 @@ static PyMethodDef methods[] = {
     {"parse_record", generated_parse_record, METH_VARARGS, "Parse fixed SMF record fields using generated IBM C header mappings."},
     {"decode_smf_time_hundredths", py_decode_smf_time_hundredths, METH_VARARGS, "Decode a 4-byte SMF time field."},
     {"is_packed_smf_date", py_is_packed_smf_date, METH_VARARGS, "Return whether a 4-byte field is a packed SMF date."},
+    {"clean_decoded_text", py_clean_decoded_text, METH_VARARGS, "Clean decoded SMF text."},
+    {"clean_ebcdic_text", (PyCFunction)py_clean_ebcdic_text, METH_VARARGS | METH_KEYWORDS, "Decode and clean EBCDIC SMF text."},
+    {"decoded_tokens", (PyCFunction)py_decoded_tokens, METH_VARARGS | METH_KEYWORDS, "Return decoded SMF text tokens."},
+    {"text_matches", (PyCFunction)py_text_matches, METH_VARARGS | METH_KEYWORDS, "Return whether decoded SMF text matches a value."},
     {"read_vbs_dataset", (PyCFunction)read_vbs_dataset, METH_VARARGS | METH_KEYWORDS, "Read logical records from a z/OS VBS dataset using native record I/O."},
     {NULL, NULL, 0, NULL},
 };

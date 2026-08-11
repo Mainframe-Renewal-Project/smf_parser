@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import codecs
 import struct
 from pathlib import Path
 from types import SimpleNamespace
 
 from pysmf import SMFRecordTypeDefinition, SMFRecordTypeRegistry
 
-try:
-    "".encode("cp1047")
-except LookupError:
-    EBCDIC_TEST_ENCODING = "cp037"
-else:
-    EBCDIC_TEST_ENCODING = "cp1047"
+def register_cp1047_test_codec() -> None:
+    try:
+        codecs.lookup("cp1047")
+    except LookupError:
+        codecs.register(_cp1047_test_codec)
+
+
+def _cp1047_test_codec(encoding: str) -> codecs.CodecInfo | None:
+    if encoding.lower().replace("-", "").replace("_", "") == "cp1047":
+        return codecs.lookup("cp037")
+    return None
+
+
+register_cp1047_test_codec()
+EBCDIC_TEST_ENCODING = "cp1047"
 
 
 def ebcdic(value: str) -> bytes:

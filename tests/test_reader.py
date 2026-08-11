@@ -15,17 +15,7 @@ from pysmf import (
     parse_header,
     read_records,
 )
-
-try:
-    "".encode("cp1047")
-except LookupError:
-    EBCDIC_TEST_ENCODING = "cp037"
-else:
-    EBCDIC_TEST_ENCODING = "cp1047"
-
-
-def ebcdic(value: str) -> bytes:
-    return value.encode(EBCDIC_TEST_ENCODING)
+from tests.helpers import ebcdic
 
 
 def standard_record(record_type: int, *, subtype: int = 0, body: bytes = b"") -> bytes:

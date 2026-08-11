@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import struct
-from codecs import lookup
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import cache
 from importlib import import_module
 from io import BytesIO
 from os import PathLike
@@ -126,20 +124,7 @@ class SMFRecord:
 def decode_ebcdic(value: bytes, *, encoding: str = "cp1047") -> str:
     """Decode a fixed-width EBCDIC field and strip EBCDIC spaces and NULs."""
 
-    return value.rstrip(b"\x40\x00").decode(
-        _available_ebcdic_encoding(encoding), errors="replace"
-    )
-
-
-@cache
-def _available_ebcdic_encoding(encoding: str) -> str:
-    try:
-        lookup(encoding)
-    except LookupError:
-        if encoding.lower().replace("-", "") == "cp1047":
-            return "cp037"
-        raise
-    return encoding
+    return value.rstrip(b"\x40\x00").decode(encoding, errors="replace")
 
 
 def decode_smf_time_hundredths(value: bytes | bytearray | memoryview) -> int:
