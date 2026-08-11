@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import os
+import struct
 import unittest
+from io import BytesIO
 from collections import Counter
+from collections.abc import Iterable
 from importlib import import_module
-from typing import ClassVar
+from typing import ClassVar, cast
 
-from pysmf import StructuredSMFRecord, read_structured_dataset
+from pysmf import (
+    SMFRecord,
+    StructuredSMFRecord,
+    parse_record,
+    parse_records,
+    read_dataset,
+    read_records,
+    read_structured_dataset,
+    read_structured_records,
+)
 
 
 ZOS_DATASET_ENV = "PYSMF_ZOS_DATASET"
@@ -20,8 +32,72 @@ def expected_record_types() -> set[int]:
     return {int(value) for value in configured.replace(",", " ").split()}
 
 
+def concrete_dataset_names(dataset_name: str) -> tuple[str, ...]:
+    if dataset_name.startswith(("//", "DD:", "/")) or dataset_name.endswith(")"):
+        return (dataset_name,)
+    try:
+        gdgs = import_module("zoautil_py.gdgs")
+    except ImportError:
+        return (dataset_name,)
+
+    generation_data_group = gdgs.GenerationDataGroupView(dataset_name.upper())
+    generations = generation_data_group.generations
+    if callable(generations):
+        generations = generations()
+    generation_entries = cast(Iterable[object], generations)
+    names = tuple(
+        str(name)
+        for generation in generation_entries
+        if (name := getattr(generation, "name", None)) is not None
+    )
+    return names or (dataset_name,)
+
+
+def structured_records(
+    dataset_names: Iterable[str], *, record_limit: int
+) -> tuple[StructuredSMFRecord, ...]:
+    records: list[StructuredSMFRecord] = []
+    for dataset_name in dataset_names:
+        remaining = record_limit - len(records) if record_limit else 0
+        if record_limit and remaining <= 0:
+            break
+        records.extend(
+            read_structured_dataset(
+                dataset_name,
+                records=remaining,
+                errors="skip",
+            )
+        )
+    return tuple(records)
+
+
+def raw_records(
+    dataset_names: Iterable[str], *, record_limit: int
+) -> tuple[SMFRecord, ...]:
+    records: list[SMFRecord] = []
+    for dataset_name in dataset_names:
+        remaining = record_limit - len(records) if record_limit else 0
+        if record_limit and remaining <= 0:
+            break
+        records.extend(read_dataset(dataset_name, records=remaining))
+    return tuple(records)
+
+
+def smf_stream(records: Iterable[SMFRecord]) -> bytes:
+    return b"".join(record.data for record in records)
+
+
+def rdw_stream(records: Iterable[SMFRecord]) -> bytes:
+    return b"".join(
+        struct.pack(">HH", len(record.data) + 4, 0) + record.data
+        for record in records
+    )
+
+
 class ZOSSmokeTests(unittest.TestCase):
     sample_key: ClassVar[tuple[str, int] | None] = None
+    sample_dataset_names: ClassVar[tuple[str, ...]] = ()
+    sample_raw_records: ClassVar[tuple[SMFRecord, ...] | None] = None
     sample_records: ClassVar[tuple[StructuredSMFRecord, ...] | None] = None
 
     def setUp(self) -> None:
@@ -37,16 +113,34 @@ class ZOSSmokeTests(unittest.TestCase):
         sample_key = (self.dataset_name, self.record_limit)
         if ZOSSmokeTests.sample_key != sample_key:
             ZOSSmokeTests.sample_key = sample_key
+            ZOSSmokeTests.sample_dataset_names = concrete_dataset_names(
+                self.dataset_name
+            )
+            ZOSSmokeTests.sample_raw_records = None
             ZOSSmokeTests.sample_records = None
         if ZOSSmokeTests.sample_records is None:
-            ZOSSmokeTests.sample_records = tuple(
-                read_structured_dataset(
-                    self.dataset_name,
-                    records=self.record_limit,
-                    errors="skip",
-                )
+            ZOSSmokeTests.sample_records = structured_records(
+                ZOSSmokeTests.sample_dataset_names,
+                record_limit=self.record_limit,
             )
         return ZOSSmokeTests.sample_records
+
+    @property
+    def dataset_names(self) -> tuple[str, ...]:
+        if ZOSSmokeTests.sample_key != (self.dataset_name, self.record_limit):
+            _ = self.records
+        return ZOSSmokeTests.sample_dataset_names
+
+    @property
+    def raw_records(self) -> tuple[SMFRecord, ...]:
+        if ZOSSmokeTests.sample_key != (self.dataset_name, self.record_limit):
+            _ = self.records
+        if ZOSSmokeTests.sample_raw_records is None:
+            ZOSSmokeTests.sample_raw_records = raw_records(
+                ZOSSmokeTests.sample_dataset_names,
+                record_limit=self.record_limit,
+            )
+        return ZOSSmokeTests.sample_raw_records
 
     def records_of_type(self, record_type: int) -> tuple[StructuredSMFRecord, ...]:
         return tuple(
@@ -83,9 +177,104 @@ class ZOSSmokeTests(unittest.TestCase):
     def test_real_dataset_structured_records_parse(self) -> None:
         records = self.records
 
-        self.assertTrue(records, "expected at least one structured SMF record")
+        self.assertTrue(
+            records,
+            "expected at least one structured SMF record from "
+            f"{', '.join(self.dataset_names)}",
+        )
         record_types = Counter(record.record_type for record in records)
         self.assertGreater(record_types.total(), 0)
+
+    def test_read_dataset_returns_raw_records_with_metadata(self) -> None:
+        records = self.raw_records
+
+        self.assertTrue(
+            records,
+            "expected at least one raw SMF record from "
+            f"{', '.join(self.dataset_names)}",
+        )
+        for record in records[:25]:
+            with self.subTest(record_type=record.record_type, offset=record.offset):
+                self.assertIsInstance(record.data, bytes)
+                self.assertEqual(record.header.record_type, record.record_type)
+                self.assertEqual(
+                    record.data[:2],
+                    record.header.length.to_bytes(2, "big"),
+                )
+                self.assertIsInstance(record.header.system_id_text, str)
+
+    def test_structured_dataset_matches_parse_records(self) -> None:
+        raw_records = self.raw_records[:25]
+        if not raw_records:
+            self.skipTest("dataset sample did not include raw SMF records")
+
+        structured_from_parse = tuple(parse_records(raw_records, errors="skip"))
+        self.assertTrue(structured_from_parse)
+        self.assertEqual(
+            [record.record_type for record in structured_from_parse],
+            [
+                record.record_type
+                for record in self.records[: len(structured_from_parse)]
+            ],
+        )
+
+    def test_parse_record_accepts_one_raw_record(self) -> None:
+        if not self.raw_records:
+            self.skipTest("dataset sample did not include raw SMF records")
+
+        structured = parse_record(self.raw_records[0])
+        self.assertEqual(structured.record_type, self.raw_records[0].record_type)
+        self.assertIs(structured.source, self.raw_records[0])
+
+    def test_read_records_supports_smf_and_rdw_binary_forms(self) -> None:
+        raw_records = self.raw_records[:10]
+        if not raw_records:
+            self.skipTest("dataset sample did not include raw SMF records")
+
+        parsed_smf = tuple(read_records(BytesIO(smf_stream(raw_records))))
+        parsed_rdw = tuple(
+            read_records(BytesIO(rdw_stream(raw_records)), record_format="rdw")
+        )
+
+        self.assertEqual(
+            [record.record_type for record in parsed_smf],
+            [record.record_type for record in raw_records],
+        )
+        self.assertEqual(
+            [record.record_type for record in parsed_rdw],
+            [record.record_type for record in raw_records],
+        )
+
+    def test_read_structured_records_supports_binary_streams(self) -> None:
+        raw_records = self.raw_records[:10]
+        if not raw_records:
+            self.skipTest("dataset sample did not include raw SMF records")
+
+        structured = tuple(
+            read_structured_records(BytesIO(smf_stream(raw_records)), errors="skip")
+        )
+
+        self.assertTrue(structured)
+        self.assertEqual(
+            [record.record_type for record in structured],
+            [record.record_type for record in raw_records[: len(structured)]],
+        )
+
+    def test_record_type_filter_limits_raw_dataset_results(self) -> None:
+        if not self.raw_records:
+            self.skipTest("dataset sample did not include raw SMF records")
+        selected_type = self.raw_records[0].record_type
+
+        filtered = tuple(
+            read_dataset(
+                self.dataset_names[0],
+                record_types={selected_type},
+                records=self.record_limit,
+            )
+        )
+
+        self.assertTrue(filtered)
+        self.assertEqual({record.record_type for record in filtered}, {selected_type})
 
     def test_real_dataset_observes_broad_record_mix(self) -> None:
         record_types = {record.record_type for record in self.records}
@@ -122,6 +311,15 @@ class ZOSSmokeTests(unittest.TestCase):
                     record.sections and "relocate_sections" in fields,
                     "section internals should not leak into scalar fields",
                 )
+
+    def test_structured_record_metadata_helpers_are_populated(self) -> None:
+        for record in self.records:
+            with self.subTest(record_type=record.record_type, offset=record.offset):
+                self.assertIsNotNone(record.source)
+                self.assertIsNotNone(record.header)
+                self.assertIsInstance(record.offset, int)
+                self.assertIsInstance(record.system_id_text, str)
+                self.assertIsInstance(record.subsystem_id_text, str)
 
     def test_real_dataset_field_richness_by_record_type(self) -> None:
         field_counts_by_type: dict[int, list[int]] = {}
