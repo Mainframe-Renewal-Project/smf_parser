@@ -304,11 +304,12 @@ class ZOSSmokeTests(unittest.TestCase):
                 errors="skip",
             )
         )
+        expected = tuple(parse_records(raw_records, errors="skip"))
 
         self.assertTrue(structured)
         self.assertEqual(
             [record.record_type for record in structured],
-            [record.record_type for record in raw_records[: len(structured)]],
+            [record.record_type for record in expected],
         )
 
     def test_record_type_filter_limits_raw_dataset_results(self) -> None:
