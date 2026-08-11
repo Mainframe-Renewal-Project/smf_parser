@@ -834,7 +834,10 @@ class ZOSSmokeTests(unittest.TestCase):
                     record.header.length if record.header is not None else None,
                 )
                 for field_name in ("SMF119HDTime", "SMF119HDDate"):
-                    assert_non_negative_int_field(self, record, field_name)
+                    self.assertIsInstance(record.fields[field_name], int)
+                    self.assertEqual(
+                        record.raw_fields[field_name], record.fields[field_name]
+                    )
 
                 if "SMF119SD_TRN" in record.fields:
                     saw_self_defining_sections = True
@@ -869,7 +872,21 @@ class ZOSSmokeTests(unittest.TestCase):
         if not saw_self_defining_sections:
             self.skipTest("dataset sample did not include SMF type 119 triplets")
         if not saw_identification_section:
-            self.skipTest("dataset sample did not include SMF type 119 identification")
+            type119_triplets = [
+                {
+                    "offset": record.offset,
+                    "subtype": record.subtype,
+                    "id_offset": record.fields.get("SMF119IDOff"),
+                    "id_length": record.fields.get("SMF119IDLen"),
+                    "id_count": record.fields.get("SMF119IDNum"),
+                    "sections": len(record.sections),
+                }
+                for record in type119_records[:5]
+            ]
+            self.fail(
+                "SMF type 119 triplets were present but no identification fields "
+                f"were decoded: {type119_triplets!r}"
+            )
         if not saw_decoded_tcpip_text:
             self.skipTest("dataset sample did not include decoded SMF type 119 text")
 
