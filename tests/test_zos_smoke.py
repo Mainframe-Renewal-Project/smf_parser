@@ -209,6 +209,23 @@ class ZOSSmokeTests(unittest.TestCase):
                 break
         return tuple(records)
 
+    def structured_records_of_type(
+        self, record_type: int
+    ) -> tuple[StructuredSMFRecord, ...]:
+        records: list[StructuredSMFRecord] = []
+        for dataset_name in self.dataset_names:
+            records.extend(
+                read_structured_dataset(
+                    dataset_name,
+                    record_types={record_type},
+                    records=self.record_limit,
+                    errors="skip",
+                )
+            )
+            if records:
+                break
+        return tuple(records)
+
     def test_native_extension_is_available(self) -> None:
         from pysmf import records
 
@@ -308,6 +325,21 @@ class ZOSSmokeTests(unittest.TestCase):
             [record.record_type for record in parsed_rdw],
             [record.record_type for record in raw_records],
         )
+        for raw_record, smf_record, rdw_record in zip(
+            raw_records, parsed_smf, parsed_rdw, strict=True
+        ):
+            with self.subTest(record_type=raw_record.record_type):
+                self.assertEqual(smf_record.data, raw_record.data)
+                self.assertIsNone(smf_record.rdw)
+                self.assertEqual(rdw_record.data, raw_record.data)
+                self.assertIsNotNone(rdw_record.rdw)
+                assert rdw_record.rdw is not None
+                self.assertEqual(rdw_record.rdw.length, len(raw_record.data) + 4)
+                self.assertEqual(rdw_record.rdw.segment_descriptor, 0)
+                self.assertEqual(
+                    rdw_record.header.raw_length,
+                    raw_record.header.raw_length,
+                )
 
     def test_read_structured_records_supports_binary_streams(self) -> None:
         raw_records = self.raw_records[:10]
@@ -324,6 +356,58 @@ class ZOSSmokeTests(unittest.TestCase):
         expected = tuple(parse_records(raw_records, errors="skip"))
 
         self.assertTrue(structured)
+        self.assertEqual(
+            [structured_output_signature(record) for record in structured],
+            [structured_output_signature(record) for record in expected],
+        )
+
+    def test_parse_record_from_bytes_matches_source_record_output(self) -> None:
+        for record in self.records[:25]:
+            self.assertIsNotNone(record.source)
+            assert record.source is not None
+            parsed_from_bytes = parse_record(record.source.data)
+            with self.subTest(record_type=record.record_type, offset=record.offset):
+                self.assertIsNone(parsed_from_bytes.source)
+                self.assertEqual(parsed_from_bytes.record_type, record.record_type)
+                self.assertEqual(parsed_from_bytes.fields, record.fields)
+                self.assertEqual(parsed_from_bytes.raw_fields, record.raw_fields)
+                self.assertEqual(
+                    section_signature(parsed_from_bytes),
+                    section_signature(record),
+                )
+
+    def test_dataset_system_id_filter_limits_raw_results(self) -> None:
+        if not self.raw_records:
+            self.skipTest("dataset sample did not include raw SMF records")
+        selected_system_id = self.raw_records[0].header.system_id_text
+
+        filtered: list[SMFRecord] = []
+        for dataset_name in self.dataset_names:
+            filtered.extend(
+                read_dataset(
+                    dataset_name,
+                    system_ids={selected_system_id},
+                    records=self.record_limit,
+                )
+            )
+            if filtered:
+                break
+
+        self.assertTrue(filtered)
+        self.assertEqual(
+            {record.header.system_id_text for record in filtered},
+            {selected_system_id},
+        )
+
+    def test_structured_record_type_filter_preserves_deep_output(self) -> None:
+        selected_type = next(iter({record.record_type for record in self.records}))
+
+        structured = self.structured_records_of_type(selected_type)
+        raw = self.raw_records_of_type(selected_type)
+        expected = tuple(parse_records(raw, errors="skip"))
+
+        self.assertTrue(structured)
+        self.assertEqual({record.record_type for record in structured}, {selected_type})
         self.assertEqual(
             [structured_output_signature(record) for record in structured],
             [structured_output_signature(record) for record in expected],
@@ -528,6 +612,35 @@ class ZOSSmokeTests(unittest.TestCase):
             with self.subTest(offset=record.offset):
                 for field_name in ("smf80evt", "smf80evq", "smf80des"):
                     self.assertIn(field_name, record.fields)
+
+    def test_real_type80_racf_fields_are_decoded_and_searchable(self) -> None:
+        type80_records = self.records_of_type(80)
+        if not type80_records:
+            self.skipTest("dataset sample did not include parsed SMF type 80 records")
+
+        saw_decoded_identity = False
+        for record in type80_records:
+            with self.subTest(offset=record.offset):
+                for field_name in ("smf80evt", "smf80evq", "smf80des"):
+                    value = record.fields[field_name]
+                    self.assertIsInstance(value, int)
+                    self.assertGreaterEqual(cast(int, value), 0)
+
+                for field_name in ("smf80usr", "smf80grp", "smf80jbn", "smf80trm"):
+                    if field_name not in record.fields:
+                        continue
+                    text = record.field_text(field_name)
+                    self.assertEqual(text, record.clean_field_text(field_name))
+                    self.assertIn(field_name, record.decoded_fields())
+                    self.assertIn(text, record.decoded_texts())
+                    if text:
+                        saw_decoded_identity = True
+                        self.assertTrue(record.find_text(text, token=True))
+
+        self.assertTrue(
+            saw_decoded_identity,
+            "expected at least one decoded RACF identity/job field",
+        )
 
     def test_real_type90_records_have_fixed_or_adjacent_triplet_fields(self) -> None:
         type90_records = self.records_of_type(90)
