@@ -189,6 +189,50 @@ class SetupGenerationTests(unittest.TestCase):
 
         self.assertEqual(module._racf_type83_subtype1_parser_lines(80), [])
 
+    def test_adjacent_self_defining_section_structs_are_generated(self) -> None:
+        module = setup_module()
+        fields = (
+            {
+                "name": "smf90pof",
+                "type": "int32_t",
+                "array": 0,
+                "bits": 0,
+                "offset": 0,
+                "size": 4,
+                "signed": True,
+            },
+            {
+                "name": "smf90pln",
+                "type": "int16_t",
+                "array": 0,
+                "bits": 0,
+                "offset": 4,
+                "size": 2,
+                "signed": True,
+            },
+            {
+                "name": "smf90pon",
+                "type": "int16_t",
+                "array": 0,
+                "bits": 0,
+                "offset": 6,
+                "size": 2,
+                "signed": True,
+            },
+        )
+
+        lines = "\n".join(module._adjacent_section_parser_lines(fields, base_offset=20))
+
+        self.assertIn("view->len >= (Py_ssize_t)28", lines)
+        self.assertIn('set_long(result, "smf90pof"', lines)
+        self.assertIn('set_long(result, "smf90pln"', lines)
+        self.assertIn('set_long(result, "smf90pon"', lines)
+        self.assertIn("append_self_defining_triplet_sections", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn("read_unsigned_be(data + 20, 4)", lines)
+        self.assertIn("read_unsigned_be(data + 24, 2)", lines)
+        self.assertIn("read_unsigned_be(data + 26, 2)", lines)
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(

@@ -287,6 +287,9 @@ def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
                     "struct_name": struct_name,
                     "include": include_name,
                     "fields": fields,
+                    "adjacent_section_fields": _record_adjacent_section_fields(
+                        int(record_type), structs
+                    ),
                     "section_structs": _record_section_structs(
                         int(record_type), structs
                     ),
@@ -500,6 +503,16 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
                     "    }",
                 ]
             )
+    adjacent_section_fields = cast(
+        tuple[dict[str, object], ...], record["adjacent_section_fields"]
+    )
+    if adjacent_section_fields:
+        lines.extend(
+            _adjacent_section_parser_lines(
+                adjacent_section_fields,
+                base_offset=minimum_size,
+            )
+        )
     lines.extend(_self_defining_triplet_parser_lines(fields))
     section_structs = cast(
         dict[str, tuple[dict[str, object], ...]], record["section_structs"]
@@ -514,6 +527,79 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
     lines.extend(_compact_racf_type80_section_parser_lines(record_type, fields_by_name))
     lines.extend(_racf_type83_subtype1_parser_lines(record_type))
     lines.extend(["    return result;", "}", ""])
+    return lines
+
+
+def _record_adjacent_section_fields(
+    record_type: int, structs: dict[str, str]
+) -> tuple[dict[str, object], ...]:
+    body = structs.get(f"smf{record_type}psg")
+    if body is None:
+        return ()
+    fields = _record_struct_fields(body)
+    return fields if _self_defining_triplets(fields) else ()
+
+
+def _adjacent_section_parser_lines(
+    fields: tuple[dict[str, object], ...], *, base_offset: int
+) -> list[str]:
+    minimum_size = base_offset + max(
+        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
+        for field in fields
+    )
+    lines = [f"    if (view->len >= (Py_ssize_t){minimum_size}) {{"]
+    for field in fields:
+        field_name = str(field["name"])
+        offset = base_offset + int(cast(int, field["offset"]))
+        size = int(cast(int, field["size"]))
+        if int(cast(int, field["array"])):
+            lines.extend(
+                [
+                    f"        if (set_bytes(result, \"{field_name}\", ",
+                    f"            data + {offset}, (Py_ssize_t){size}) < 0) {{",
+                    "            Py_DECREF(result);",
+                    "            return NULL;",
+                    "        }",
+                ]
+            )
+        else:
+            reader = "read_signed_be" if bool(field["signed"]) else "read_unsigned_be"
+            lines.extend(
+                [
+                    f"        if (set_long(result, \"{field_name}\", ",
+                    f"            {reader}(data + {offset},",
+                    f"            (Py_ssize_t){size})) < 0) {{",
+                    "            Py_DECREF(result);",
+                    "            return NULL;",
+                    "        }",
+                ]
+            )
+    for offset_field, length_field, count_field in _self_defining_triplets(fields):
+        data_type = base_offset + int(cast(int, offset_field["offset"]))
+        section_offset_field_offset = base_offset + int(
+            cast(int, offset_field["offset"])
+        )
+        section_length_field_offset = base_offset + int(
+            cast(int, length_field["offset"])
+        )
+        section_count_field_offset = base_offset + int(cast(int, count_field["offset"]))
+        lines.extend(
+            [
+                "        if (append_self_defining_triplet_sections(",
+                "            result, \"relocate_sections\", data, view->len,",
+                f"            {data_type},",
+                "            read_unsigned_be(data + "
+                f"{section_offset_field_offset}, 4),",
+                "            read_unsigned_be(data + "
+                f"{section_length_field_offset}, 2),",
+                "            read_unsigned_be(data + "
+                f"{section_count_field_offset}, 2)) < 0) {{",
+                "            Py_DECREF(result);",
+                "            return NULL;",
+                "        }",
+            ]
+        )
+    lines.append("    }")
     return lines
 
 
@@ -776,9 +862,9 @@ def _looks_like_section_triplet(
     count_field: dict[str, object],
 ) -> bool:
     return (
-        _field_name_contains(offset_field, ("off", "ofs", "rel", "rba"))
-        and _field_name_contains(length_field, ("len", "lng", "siz"))
-        and _field_name_contains(count_field, ("cnt", "ct", "num", "nbr"))
+        _field_name_contains(offset_field, ("off", "ofs", "rel", "rba", "of"))
+        and _field_name_contains(length_field, ("len", "lng", "siz", "ln"))
+        and _field_name_contains(count_field, ("cnt", "ct", "num", "nbr", "on"))
     )
 
 
