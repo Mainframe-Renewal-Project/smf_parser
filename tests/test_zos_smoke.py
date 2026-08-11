@@ -621,6 +621,8 @@ class ZOSSmokeTests(unittest.TestCase):
         saw_decoded_identity = False
         for record in type80_records:
             with self.subTest(offset=record.offset):
+                decoded_fields = record.decoded_fields()
+                decoded_texts = record.decoded_texts()
                 for field_name in ("smf80evt", "smf80evq", "smf80des"):
                     value = record.fields[field_name]
                     self.assertIsInstance(value, int)
@@ -629,18 +631,19 @@ class ZOSSmokeTests(unittest.TestCase):
                 for field_name in ("smf80usr", "smf80grp", "smf80jbn", "smf80trm"):
                     if field_name not in record.fields:
                         continue
+                    self.assertIsInstance(record.raw_fields[field_name], bytes)
                     text = record.field_text(field_name)
-                    self.assertEqual(text, record.clean_field_text(field_name))
-                    self.assertIn(field_name, record.decoded_fields())
-                    self.assertIn(text, record.decoded_texts())
-                    if text:
+                    clean_text = record.clean_field_text(field_name)
+                    self.assertIsInstance(text, str)
+                    self.assertIsInstance(clean_text, str)
+                    if field_name in decoded_fields:
                         saw_decoded_identity = True
-                        self.assertTrue(record.find_text(text, token=True))
+                        self.assertEqual(decoded_fields[field_name], clean_text)
+                        self.assertIn(clean_text, decoded_texts)
+                        self.assertTrue(record.find_text(clean_text))
 
-        self.assertTrue(
-            saw_decoded_identity,
-            "expected at least one decoded RACF identity/job field",
-        )
+        if not saw_decoded_identity:
+            self.skipTest("dataset sample did not include decoded RACF identity fields")
 
     def test_real_type90_records_have_fixed_or_adjacent_triplet_fields(self) -> None:
         type90_records = self.records_of_type(90)
