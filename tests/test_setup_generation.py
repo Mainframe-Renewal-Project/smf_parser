@@ -174,6 +174,21 @@ class SetupGenerationTests(unittest.TestCase):
             module._compact_racf_type80_section_parser_lines(81, fields_by_name), []
         )
 
+    def test_racf_type83_subtype1_security_fields_are_generated(self) -> None:
+        module = setup_module()
+
+        lines = "\n".join(module._racf_type83_subtype1_parser_lines(83))
+
+        self.assertIn('set_long(result, "smf83typ", 1)', lines)
+        self.assertIn('set_long(result, "smf83evt"', lines)
+        self.assertIn('set_long(result, "smf83evq"', lines)
+        self.assertIn('set_bytes(result, "smf83usr"', lines)
+        self.assertIn('set_bytes(result, "smf83jbn"', lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertNotIn("type83_security_sections", lines)
+
+        self.assertEqual(module._racf_type83_subtype1_parser_lines(80), [])
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(

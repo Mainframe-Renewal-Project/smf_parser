@@ -58,6 +58,7 @@ IBM_SMF_HEADER_NAMES = {
     "ITVSMF41",
     "IWMSMF90",
     "IWMSMF97",
+    "IXCYSM90",
     "IXGSMF88",
 }
 

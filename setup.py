@@ -512,7 +512,109 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
     )
     lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
     lines.extend(_compact_racf_type80_section_parser_lines(record_type, fields_by_name))
+    lines.extend(_racf_type83_subtype1_parser_lines(record_type))
     lines.extend(["    return result;", "}", ""])
+    return lines
+
+
+def _racf_type83_subtype1_parser_lines(record_type: int) -> list[str]:
+    if record_type != 83:
+        return []
+    header_integer_fields = (
+        ("smf83typ", "1"),
+        ("smf83trp", "read_unsigned_be(data + 24, 2)"),
+        ("smf83opd", "read_unsigned_be(data + 28, 4)"),
+        ("smf83lpd", "read_unsigned_be(data + 32, 2)"),
+        ("smf83npd", "read_unsigned_be(data + 34, 2)"),
+        ("smf83od1", "read_unsigned_be(data + 36, 4)"),
+        ("smf83ld1", "read_unsigned_be(data + 40, 2)"),
+        ("smf83nd1", "read_unsigned_be(data + 42, 2)"),
+        ("smf83od2", "read_unsigned_be(data + 44, 4)"),
+        ("smf83ld2", "read_unsigned_be(data + 48, 2)"),
+        ("smf83nd2", "read_unsigned_be(data + 50, 2)"),
+    )
+    security_integer_fields = (
+        ("smf83lnk", 0, 4, "read_unsigned_be"),
+        ("smf83des", 4, 2, "read_unsigned_be"),
+        ("smf83evt", 6, 1, "read_unsigned_be"),
+        ("smf83evq", 7, 1, "read_unsigned_be"),
+        ("smf83rel", 24, 2, "read_unsigned_be"),
+        ("smf83cnt", 26, 2, "read_unsigned_be"),
+        ("smf83ath", 28, 1, "read_unsigned_be"),
+        ("smf83rea", 29, 1, "read_unsigned_be"),
+        ("smf83tlv", 30, 1, "read_unsigned_be"),
+        ("smf83err", 31, 1, "read_unsigned_be"),
+        ("smf83rst", 48, 4, "read_signed_be"),
+        ("smf83ver", 64, 1, "read_unsigned_be"),
+        ("smf83re2", 65, 1, "read_unsigned_be"),
+        ("smf83au2", 78, 1, "read_unsigned_be"),
+        ("smf83rsv", 79, 1, "read_unsigned_be"),
+    )
+    security_byte_fields = (
+        ("smf83usr", 8, 8),
+        ("smf83grp", 16, 8),
+        ("smf83trm", 32, 8),
+        ("smf83jbn", 40, 8),
+        ("smf83rsd", 52, 4),
+        ("smf83uid", 56, 8),
+        ("smf83vrm", 66, 4),
+        ("smf83sec", 70, 8),
+        ("smf83us2", 80, 8),
+        ("smf83gr2", 88, 8),
+    )
+    lines = [
+        "    if (view->len >= 52 && read_unsigned_be(data + 22, 2) == 1) {",
+        "        unsigned long long security_offset;",
+        "        if (set_bytes(result, \"smf83ssi\", data + 18, 4) < 0 ||",
+    ]
+    for index, (field_name, expression) in enumerate(header_integer_fields):
+        suffix = " ||" if index < len(header_integer_fields) - 1 else ") {"
+        lines.append(
+            f"            set_long(result, \"{field_name}\", {expression}) < 0{suffix}"
+        )
+    lines.extend(
+        [
+        "            Py_DECREF(result);",
+        "            return NULL;",
+        "        }",
+        "        if (append_self_defining_variable_sections(",
+        "            result, \"relocate_sections\", data, view->len,",
+        "            read_unsigned_be(data + 44, 4),",
+        "            read_unsigned_be(data + 50, 2), 1, 1, 2) < 0) {",
+        "            Py_DECREF(result);",
+        "            return NULL;",
+        "        }",
+        "        security_offset = read_unsigned_be(data + 36, 4);",
+        "        if (read_unsigned_be(data + 42, 2) != 0 &&",
+        "            read_unsigned_be(data + 40, 2) >= 96 &&",
+        "            security_offset <= (unsigned long long)view->len &&",
+        "            security_offset + 96 <= (unsigned long long)view->len) {",
+        "            if (",
+        ]
+    )
+    security_conditions: list[str] = []
+    for field_name, offset, size, reader in security_integer_fields:
+        expression = f"{reader}(data + security_offset + {offset}, {size})"
+        security_conditions.append(
+            f"set_long(result, \"{field_name}\", {expression}) < 0"
+        )
+    for field_name, offset, size in security_byte_fields:
+        security_conditions.append(
+            f"set_bytes(result, \"{field_name}\", "
+            f"data + security_offset + {offset}, {size}) < 0"
+        )
+    for index, condition in enumerate(security_conditions):
+        suffix = " ||" if index < len(security_conditions) - 1 else ") {"
+        lines.append(f"                {condition}{suffix}")
+    lines.extend(
+        [
+        "                Py_DECREF(result);",
+        "                return NULL;",
+        "            }",
+        "        }",
+        "    }",
+        ]
+    )
     return lines
 
 
