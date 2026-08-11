@@ -468,7 +468,7 @@ static int32_t decode_smf_time_hundredths(const unsigned char *data) {
     return read_i32_be(data);
 }
 
-static int is_packed_smf_date(const unsigned char *data) {
+int is_packed_smf_date(const unsigned char *data) {
     unsigned char nibbles[8];
     int index;
     int day_of_year;
