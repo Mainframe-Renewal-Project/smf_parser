@@ -189,6 +189,23 @@ class SetupGenerationTests(unittest.TestCase):
 
         self.assertEqual(module._racf_type83_subtype1_parser_lines(80), [])
 
+    def test_racf_type83_fixed_header_fields_are_preserved(self) -> None:
+        module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IFASMFR9"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
+        fields = module._record_struct_fields(structs["smf83rcd"])
+        fields_by_name = {field["name"]: field for field in fields}
+
+        self.assertIn("smf83len", fields_by_name)
+        self.assertIn("smf83rty", fields_by_name)
+        self.assertIn("smf83sid", fields_by_name)
+        self.assertIn("smf83df1", fields_by_name)
+        self.assertNotIn("smf83trp", fields_by_name)
+        self.assertEqual(fields_by_name["smf83len"]["offset"], 0)
+        self.assertEqual(fields_by_name["smf83df1"]["offset"], 18)
+
     def test_adjacent_self_defining_section_structs_are_generated(self) -> None:
         module = setup_module()
         fields = (

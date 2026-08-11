@@ -447,6 +447,10 @@ def _top_level_union_struct_body(body: str) -> str | None:
         match = re.search(r"(?:^|\n)\s*union\s*\{", body[position:])
         if match is None:
             return None
+        prefix_end = position + match.start()
+        prefix = re.sub(r"/\*.*?\*/", "", body[:prefix_end], flags=re.DOTALL)
+        if prefix.strip():
+            return None
         union_open = position + match.end() - 1
         if body[:union_open].count("{") == body[:union_open].count("}"):
             break
