@@ -287,7 +287,9 @@ def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
                     "struct_name": struct_name,
                     "include": include_name,
                     "fields": fields,
-                    "section_structs": _record_section_structs(int(record_type), structs),
+                    "section_structs": _record_section_structs(
+                        int(record_type), structs
+                    ),
                 }
             )
             seen_record_types.add(int(record_type))
@@ -392,13 +394,17 @@ def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
         if name in seen or name.endswith(("_end_v1", "_end_v2", "_end_v3")):
             continue
         if field_bits:
-            offset = (top_level_union_start if top_level_union_depth else bit_offset) // 8
+            offset = (
+                top_level_union_start if top_level_union_depth else bit_offset
+            ) // 8
             bit_offset += field_bits
             if offset * 8 != bit_offset - field_bits or field_bits % 8:
                 continue
             size = field_bits // 8
         else:
-            field_bit_offset = top_level_union_start if top_level_union_depth else bit_offset
+            field_bit_offset = (
+                top_level_union_start if top_level_union_depth else bit_offset
+            )
             if field_bit_offset % 8:
                 field_bit_offset += 8 - (field_bit_offset % 8)
             offset = field_bit_offset // 8
@@ -505,8 +511,37 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         )
     )
     lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
+    lines.extend(_compact_racf_type80_section_parser_lines(record_type, fields_by_name))
     lines.extend(["    return result;", "}", ""])
     return lines
+
+
+def _compact_racf_type80_section_parser_lines(
+    record_type: int, fields_by_name: dict[str, dict[str, object]]
+) -> list[str]:
+    if record_type != 80:
+        return []
+    descriptor = fields_by_name.get("smf80des")
+    event_qualifier = fields_by_name.get("smf80evq")
+    if descriptor is None or event_qualifier is None:
+        return []
+    descriptor_offset = int(cast(int, descriptor["offset"]))
+    compact_relocate_offset = int(cast(int, event_qualifier["offset"])) + 1
+    compact_count_offset = compact_relocate_offset + 2
+    return [
+        "    if (PyDict_GetItemString(result, \"relocate_sections\") == NULL && ",
+        f"        read_unsigned_be(data + {compact_relocate_offset}, 2) != 0 &&",
+        f"        read_unsigned_be(data + {compact_count_offset}, 2) != 0) {{",
+        "        if (append_self_defining_section_directory(",
+        "            result, \"relocate_sections\", data, view->len,",
+        f"            {descriptor_offset} + read_unsigned_be(",
+        f"                data + {compact_relocate_offset}, 2),",
+        f"            read_unsigned_be(data + {compact_count_offset}, 2)) < 0) {{",
+        "            Py_DECREF(result);",
+        "            return NULL;",
+        "        }",
+        "    }",
+    ]
 
 
 def _record_section_structs(

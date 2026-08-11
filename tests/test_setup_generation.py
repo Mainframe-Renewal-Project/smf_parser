@@ -154,6 +154,26 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertEqual(fields_by_name["smf80evq"]["offset"], 21)
         self.assertEqual(fields_by_name["smf80usr"]["offset"], 22)
 
+    def test_racf_type80_compact_section_directory_is_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf80des": {"name": "smf80des", "offset": 18, "size": 2},
+            "smf80evq": {"name": "smf80evq", "offset": 21, "size": 1},
+        }
+
+        lines = "\n".join(
+            module._compact_racf_type80_section_parser_lines(80, fields_by_name)
+        )
+
+        self.assertIn('PyDict_GetItemString(result, "relocate_sections")', lines)
+        self.assertIn("read_unsigned_be(data + 22, 2)", lines)
+        self.assertIn("read_unsigned_be(data + 24, 2)", lines)
+        self.assertIn("18 + read_unsigned_be(\n                data + 22, 2)", lines)
+
+        self.assertEqual(
+            module._compact_racf_type80_section_parser_lines(81, fields_by_name), []
+        )
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(
