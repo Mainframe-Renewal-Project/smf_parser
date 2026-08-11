@@ -179,11 +179,16 @@ class SetupGenerationTests(unittest.TestCase):
 
         lines = "\n".join(module._racf_type83_subtype1_parser_lines(83))
 
-        self.assertIn('set_long(result, "smf83typ", 1)', lines)
+        self.assertIn("smf83_subtype_offset", lines)
+        self.assertIn("smf83_sds_offset", lines)
+        self.assertIn("read_unsigned_be(data + 18, 2) == 1", lines)
+        self.assertIn("read_unsigned_be(data + 22, 2) == 1", lines)
+        self.assertIn('set_long(result, "smf83typ"', lines)
         self.assertIn('set_long(result, "smf83evt"', lines)
         self.assertIn('set_long(result, "smf83evq"', lines)
         self.assertIn('set_bytes(result, "smf83usr"', lines)
         self.assertIn('set_bytes(result, "smf83jbn"', lines)
+        self.assertIn("data + smf83_sds_offset + 12", lines)
         self.assertIn('result, "relocate_sections", data, view->len', lines)
         self.assertNotIn("type83_security_sections", lines)
 
