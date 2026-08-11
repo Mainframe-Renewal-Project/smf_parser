@@ -127,6 +127,40 @@ def structured_output_signature(record: StructuredSMFRecord) -> tuple[object, ..
     )
 
 
+def assert_decoded_field_is_searchable(
+    test_case: unittest.TestCase,
+    record: StructuredSMFRecord,
+    field_name: str,
+) -> bool:
+    if field_name not in record.fields:
+        return False
+    test_case.assertIsInstance(record.raw_fields[field_name], bytes)
+    text = record.field_text(field_name)
+    clean_text = record.clean_field_text(field_name)
+    test_case.assertIsInstance(text, str)
+    test_case.assertIsInstance(clean_text, str)
+    decoded_fields = record.decoded_fields()
+    if field_name not in decoded_fields:
+        return False
+    test_case.assertEqual(decoded_fields[field_name], clean_text)
+    test_case.assertIn(clean_text, record.decoded_texts())
+    test_case.assertTrue(record.find_text(clean_text))
+    return True
+
+
+def assert_non_negative_int_field(
+    test_case: unittest.TestCase,
+    record: StructuredSMFRecord,
+    field_name: str,
+) -> int:
+    value = record.fields[field_name]
+    test_case.assertIsInstance(value, int)
+    value = cast(int, value)
+    test_case.assertGreaterEqual(value, 0)
+    test_case.assertEqual(record.raw_fields[field_name], value)
+    return value
+
+
 class ZOSSmokeTests(unittest.TestCase):
     sample_key: ClassVar[tuple[str, int] | None] = None
     sample_dataset_names: ClassVar[tuple[str, ...]] = ()
@@ -621,29 +655,49 @@ class ZOSSmokeTests(unittest.TestCase):
         saw_decoded_identity = False
         for record in type80_records:
             with self.subTest(offset=record.offset):
-                decoded_fields = record.decoded_fields()
-                decoded_texts = record.decoded_texts()
                 for field_name in ("smf80evt", "smf80evq", "smf80des"):
-                    value = record.fields[field_name]
-                    self.assertIsInstance(value, int)
-                    self.assertGreaterEqual(cast(int, value), 0)
+                    assert_non_negative_int_field(self, record, field_name)
 
                 for field_name in ("smf80usr", "smf80grp", "smf80jbn", "smf80trm"):
-                    if field_name not in record.fields:
-                        continue
-                    self.assertIsInstance(record.raw_fields[field_name], bytes)
-                    text = record.field_text(field_name)
-                    clean_text = record.clean_field_text(field_name)
-                    self.assertIsInstance(text, str)
-                    self.assertIsInstance(clean_text, str)
-                    if field_name in decoded_fields:
+                    if assert_decoded_field_is_searchable(self, record, field_name):
                         saw_decoded_identity = True
-                        self.assertEqual(decoded_fields[field_name], clean_text)
-                        self.assertIn(clean_text, decoded_texts)
-                        self.assertTrue(record.find_text(clean_text))
 
         if not saw_decoded_identity:
             self.skipTest("dataset sample did not include decoded RACF identity fields")
+
+    def test_real_type83_security_fields_are_decoded_when_present(self) -> None:
+        type83_records = self.records_of_type(83)
+        if not type83_records:
+            self.skipTest("dataset sample did not include parsed SMF type 83 records")
+
+        saw_security_record = False
+        saw_decoded_identity = False
+        for record in type83_records:
+            if "smf83typ" not in record.fields:
+                continue
+            saw_security_record = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                self.assertEqual(
+                    assert_non_negative_int_field(self, record, "smf83typ"),
+                    1,
+                )
+                self.assertEqual(
+                    assert_non_negative_int_field(self, record, "smf83trp"),
+                    3,
+                )
+                for field_name in ("smf83evt", "smf83evq"):
+                    if field_name in record.fields:
+                        assert_non_negative_int_field(self, record, field_name)
+                for field_name in ("smf83usr", "smf83jbn"):
+                    if assert_decoded_field_is_searchable(self, record, field_name):
+                        saw_decoded_identity = True
+
+        if not saw_security_record:
+            self.skipTest(
+                "dataset sample did not include SMF type 83 subtype 1 records"
+            )
+        if not saw_decoded_identity:
+            self.skipTest("dataset sample did not include decoded SMF type 83 fields")
 
     def test_real_type90_records_have_fixed_or_adjacent_triplet_fields(self) -> None:
         type90_records = self.records_of_type(90)
@@ -657,6 +711,30 @@ class ZOSSmokeTests(unittest.TestCase):
                     self.assertIn("smf90pln", record.fields)
                     self.assertIn("smf90pon", record.fields)
 
+    def test_real_type90_adjacent_triplets_are_consistent_when_present(self) -> None:
+        type90_records = self.records_of_type(90)
+        if not type90_records:
+            self.skipTest("dataset sample did not include parsed SMF type 90 records")
+
+        saw_adjacent_triplet = False
+        for record in type90_records:
+            if "smf90pof" not in record.fields:
+                continue
+            saw_adjacent_triplet = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                offset = assert_non_negative_int_field(self, record, "smf90pof")
+                length = assert_non_negative_int_field(self, record, "smf90pln")
+                count = assert_non_negative_int_field(self, record, "smf90pon")
+                if count:
+                    self.assertGreater(offset, 0)
+                    self.assertGreater(length, 0)
+                self.assertGreaterEqual(len(record.sections), count)
+
+        if not saw_adjacent_triplet:
+            self.skipTest(
+                "dataset sample did not include SMF type 90 adjacent triplets"
+            )
+
     def test_real_type98_records_have_sds_header_fields(self) -> None:
         type98_records = self.records_of_type(98)
         if not type98_records:
@@ -669,6 +747,34 @@ class ZOSSmokeTests(unittest.TestCase):
                 if "smf98sdstripletsnum" in record.fields:
                     self.assertIsInstance(record.fields["smf98sdstripletsnum"], int)
 
+    def test_real_type98_sds_directory_is_consistent_when_present(self) -> None:
+        type98_records = self.records_of_type(98)
+        if not type98_records:
+            self.skipTest("dataset sample did not include parsed SMF type 98 records")
+
+        saw_sds_directory = False
+        saw_populated_directory = False
+        for record in type98_records:
+            if "smf98sdstripletsnum" not in record.fields:
+                continue
+            saw_sds_directory = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                triplet_count = assert_non_negative_int_field(
+                    self, record, "smf98sdstripletsnum"
+                )
+                if "smf98sdslen" in record.fields:
+                    assert_non_negative_int_field(self, record, "smf98sdslen")
+                if triplet_count:
+                    saw_populated_directory = True
+                    self.assertTrue(record.sections)
+
+        if not saw_sds_directory:
+            self.skipTest("dataset sample did not include SMF type 98 SDS directories")
+        if not saw_populated_directory:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 98 SDS directories"
+            )
+
     def test_real_type1154_records_have_common_triplet_fields(self) -> None:
         type1154_records = self.records_of_type(1154)
         if not type1154_records:
@@ -680,6 +786,34 @@ class ZOSSmokeTests(unittest.TestCase):
                 if "smf1154_c_offset" in record.fields:
                     self.assertIn("smf1154_c_userid", record.fields)
                     self.assertIn("smf1154_c_jobname", record.fields)
+
+    def test_real_type1154_common_fields_are_decoded_when_present(self) -> None:
+        type1154_records = self.records_of_type(1154)
+        if not type1154_records:
+            self.skipTest("dataset sample did not include parsed SMF type 1154 records")
+
+        saw_common_section = False
+        saw_decoded_common_text = False
+        for record in type1154_records:
+            if "smf1154_c_offset" not in record.fields:
+                continue
+            saw_common_section = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                assert_non_negative_int_field(self, record, "smf1154_c_offset")
+                if "smf1154_subspec_offset" in record.fields:
+                    assert_non_negative_int_field(
+                        self, record, "smf1154_subspec_offset"
+                    )
+                for field_name in ("smf1154_c_userid", "smf1154_c_jobname"):
+                    if assert_decoded_field_is_searchable(self, record, field_name):
+                        saw_decoded_common_text = True
+
+        if not saw_common_section:
+            self.skipTest(
+                "dataset sample did not include SMF type 1154 common sections"
+            )
+        if not saw_decoded_common_text:
+            self.skipTest("dataset sample did not include decoded SMF type 1154 text")
 
     def test_real_type83_records_keep_fixed_header_layout(self) -> None:
         type83_records = self.records_of_type(83)
