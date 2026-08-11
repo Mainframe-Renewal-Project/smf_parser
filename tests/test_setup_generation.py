@@ -138,6 +138,22 @@ class SetupGenerationTests(unittest.TestCase):
 
         self.assertNotIn("append_self_defining_section_directory", directory_lines)
 
+    def test_racf_type80_event_offsets_are_header_derived(self) -> None:
+        module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IFASMFR9"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
+        fields = module._record_struct_fields(structs["smfrcd80"])
+        fields_by_name = {field["name"]: field for field in fields}
+
+        self.assertEqual(fields_by_name["smf80des"]["offset"], 18)
+        self.assertEqual(fields_by_name["smf80des"]["size"], 2)
+        self.assertEqual(fields_by_name["smf80evt"]["offset"], 20)
+        self.assertEqual(fields_by_name["smf80evt"]["size"], 1)
+        self.assertEqual(fields_by_name["smf80evq"]["offset"], 21)
+        self.assertEqual(fields_by_name["smf80usr"]["offset"], 22)
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(
