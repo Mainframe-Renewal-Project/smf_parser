@@ -185,6 +185,7 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("is_packed_smf_date(data + 10)", lines)
         self.assertIn("read_unsigned_be(data + 18, 2) == 1", lines)
         self.assertIn("read_unsigned_be(data + 22, 2) == 1", lines)
+        self.assertIn("read_unsigned_be(data + smf83_sds_offset, 2) != 3", lines)
         self.assertIn('set_long(result, "smf83typ"', lines)
         self.assertIn('set_long(result, "smf83evt"', lines)
         self.assertIn('set_long(result, "smf83evq"', lines)
@@ -192,6 +193,7 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn('set_bytes(result, "smf83jbn"', lines)
         self.assertIn("data + smf83_sds_offset + 12", lines)
         self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn("PyErr_Clear();", lines)
         self.assertNotIn("type83_security_sections", lines)
 
         self.assertEqual(module._racf_type83_subtype1_parser_lines(80), [])
