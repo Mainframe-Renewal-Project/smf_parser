@@ -208,7 +208,13 @@ long long read_signed_be(const unsigned char *data, Py_ssize_t length) {
 }
 
 int validate_record_type(const unsigned char *data, int expected) {
-    return data[5] == (unsigned char)expected;
+    if (expected <= 255 && data[5] == (unsigned char)expected) {
+        return 1;
+    }
+    if (data[5] == EXTENDED_RECORD_INDICATOR && (data[4] & EXTENDED_HEADER_FLAG)) {
+        return read_unsigned_be(data + 52, 2) == (unsigned long long)expected;
+    }
+    return 0;
 }
 
 static int append_section(PyObject *list, unsigned long long data_type, const unsigned char *data, Py_ssize_t length, Py_ssize_t offset) {
@@ -376,6 +382,40 @@ int append_self_defining_section_directory(PyObject *dict, const char *key, cons
         appended += triplet_sections;
     }
     return 0;
+}
+
+int append_self_defining_long_triplet_directory(PyObject *dict, const char *key, const unsigned char *data, Py_ssize_t record_length, unsigned long long directory, unsigned long long count) {
+    unsigned long long index;
+    int appended = 0;
+    if (directory == 0 || count == 0) {
+        return 0;
+    }
+    if (directory > (unsigned long long)record_length) {
+        return 0;
+    }
+    if (count > ((unsigned long long)record_length - directory) / 8) {
+        return 0;
+    }
+    for (index = 0; index < count; index++) {
+        Py_ssize_t entry_offset = (Py_ssize_t)(directory + (index * 8));
+        unsigned long long section_offset = read_unsigned_be(data + entry_offset, 4);
+        unsigned long long section_length = read_unsigned_be(data + entry_offset + 4, 2);
+        unsigned long long section_count = read_unsigned_be(data + entry_offset + 6, 2);
+        int triplet_sections = append_self_defining_triplet_sections(
+                dict,
+                key,
+                data,
+                record_length,
+                (unsigned long long)entry_offset,
+                section_offset,
+                section_length,
+                section_count);
+        if (triplet_sections < 0) {
+            return -1;
+        }
+        appended += triplet_sections;
+    }
+    return appended;
 }
 
 static uint16_t read_u16_be(const unsigned char *data) {

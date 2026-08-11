@@ -233,6 +233,57 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("read_unsigned_be(data + 24, 2)", lines)
         self.assertIn("read_unsigned_be(data + 26, 2)", lines)
 
+    def test_smf98_top_level_union_header_fields_are_extracted(self) -> None:
+        module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IHAHR098"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
+        fields = module._record_struct_fields(structs["smfr98"])
+        fields_by_name = {field["name"]: field for field in fields}
+
+        self.assertIn("smf98len", fields_by_name)
+        self.assertIn("smf98sty", fields_by_name)
+        self.assertIn("smf98sdslen", fields_by_name)
+        self.assertIn("smf98sdstripletsnum", fields_by_name)
+        self.assertEqual(fields_by_name["smf98sty"]["offset"], 22)
+        self.assertEqual(fields_by_name["smf98sdstripletsnum"]["offset"], 28)
+
+    def test_smf98_sds_long_triplet_directory_is_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf98sdstripletsnum": {
+                "name": "smf98sdstripletsnum",
+                "offset": 28,
+                "size": 2,
+            },
+        }
+
+        lines = "\n".join(module._smf98_sds_parser_lines(98, fields_by_name))
+
+        self.assertIn("append_self_defining_long_triplet_directory", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn("48,", lines)
+        self.assertIn("read_unsigned_be(data + 28, 2)", lines)
+
+        self.assertEqual(module._smf98_sds_parser_lines(90, fields_by_name), [])
+
+    def test_smf1154_common_directory_is_generated(self) -> None:
+        module = setup_module()
+
+        lines = "\n".join(module._smf1154_common_parser_lines(1154))
+
+        self.assertIn("smf1154_ctrp = 24 + read_unsigned_be(data + 24, 2)", lines)
+        self.assertIn('set_long(result, "smf1154_c_offset"', lines)
+        self.assertIn('set_long(result, "smf1154_subspec_offset"', lines)
+        self.assertIn("append_self_defining_long_triplet_directory", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+        self.assertIn('set_bytes(result, "smf1154_c_userid"', lines)
+        self.assertIn('set_bytes(result, "smf1154_c_jobname"', lines)
+
+        self.assertEqual(module._smf1154_common_parser_lines(98), [])
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(
@@ -250,6 +301,34 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn(
             "SMF variable section length is outside the record", variable_parser
         )
+
+    def test_native_long_triplet_directory_uses_four_byte_offsets(self) -> None:
+        native = native_source()
+        directory_parser = generated_function_source(
+            native, "append_self_defining_long_triplet_directory"
+        )
+
+        self.assertIn("directory + (index * 8)", directory_parser)
+        self.assertIn(
+            "section_offset = read_unsigned_be(data + entry_offset, 4)",
+            directory_parser,
+        )
+        self.assertIn(
+            "section_length = read_unsigned_be(data + entry_offset + 4, 2)",
+            directory_parser,
+        )
+        self.assertIn(
+            "section_count = read_unsigned_be(data + entry_offset + 6, 2)",
+            directory_parser,
+        )
+
+    def test_native_record_type_validation_accepts_extended_records(self) -> None:
+        native = native_source()
+        validator = generated_function_source(native, "validate_record_type")
+
+        self.assertIn("data[5] == EXTENDED_RECORD_INDICATOR", validator)
+        self.assertIn("data[4] & EXTENDED_HEADER_FLAG", validator)
+        self.assertIn("read_unsigned_be(data + 52, 2)", validator)
 
     def test_native_section_directory_can_use_header_anchor_without_count(
         self,

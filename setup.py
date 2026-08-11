@@ -226,6 +226,9 @@ def _generate_record_parser_source(
         "int append_self_defining_section_directory(PyObject *dict, ",
         "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
         "unsigned long long directory, unsigned long long count);",
+        "int append_self_defining_long_triplet_directory(PyObject *dict, ",
+        "const char *key, const unsigned char *data, Py_ssize_t record_length, ",
+        "unsigned long long directory, unsigned long long count);",
         "",
     ]
 
@@ -279,7 +282,7 @@ def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
             if struct_name is None:
                 continue
             fields = _record_struct_fields(structs[struct_name])
-            if not fields:
+            if not fields and int(record_type) != 1154:
                 continue
             records.append(
                 {
@@ -349,6 +352,12 @@ def _record_struct_name(record_type: int, structs: dict[str, str]) -> str | None
 
 
 def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
+    top_level_union_body = _top_level_union_struct_body(body)
+    if top_level_union_body is not None:
+        union_fields = _record_struct_fields(top_level_union_body)
+        if len(union_fields) > 1:
+            return union_fields
+
     fields: list[dict[str, object]] = []
     seen: set[str] = set()
     bit_offset = 0
@@ -432,6 +441,46 @@ def _record_struct_fields(body: str) -> tuple[dict[str, object], ...]:
     return tuple(fields)
 
 
+def _top_level_union_struct_body(body: str) -> str | None:
+    position = 0
+    while True:
+        match = re.search(r"(?:^|\n)\s*union\s*\{", body[position:])
+        if match is None:
+            return None
+        union_open = position + match.end() - 1
+        if body[:union_open].count("{") == body[:union_open].count("}"):
+            break
+        position = union_open + 1
+
+    depth = 1
+    index = union_open + 1
+    while index < len(body) and depth:
+        if body[index] == "{":
+            depth += 1
+        elif body[index] == "}":
+            depth -= 1
+        index += 1
+    semicolon = body.find(";", index)
+    if semicolon < 0 or body[index:semicolon].strip():
+        return None
+    union_body = body[union_open + 1 : index - 1]
+    struct_match = re.search(r"(?:^|\n)\s*struct\s*\{", union_body)
+    if struct_match is None:
+        return None
+    struct_open = struct_match.end() - 1
+    depth = 1
+    index = struct_open + 1
+    while index < len(union_body) and depth:
+        if union_body[index] == "{":
+            depth += 1
+        elif union_body[index] == "}":
+            depth -= 1
+        index += 1
+    if depth != 0:
+        return None
+    return union_body[struct_open + 1 : index - 1]
+
+
 def _c_field_size(c_type: str) -> int:
     return {
         "char": 1,
@@ -456,9 +505,13 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
     record_type = int(cast(int, record["record_type"]))
     fields = cast(tuple[dict[str, object], ...], record["fields"])
     fields_by_name = {str(field["name"]): field for field in fields}
-    minimum_size = max(
-        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
-        for field in fields
+    minimum_size = (
+        max(
+            int(cast(int, field["offset"])) + int(cast(int, field["size"]))
+            for field in fields
+        )
+        if fields
+        else 56
     )
     lines = [
         f"static PyObject *parse_{struct_name}(Py_buffer *view) {{",
@@ -524,10 +577,142 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         )
     )
     lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
+    lines.extend(_smf98_sds_parser_lines(record_type, fields_by_name))
+    lines.extend(_smf1154_common_parser_lines(record_type))
     lines.extend(_compact_racf_type80_section_parser_lines(record_type, fields_by_name))
     lines.extend(_racf_type83_subtype1_parser_lines(record_type))
     lines.extend(["    return result;", "}", ""])
     return lines
+
+
+def _smf1154_common_parser_lines(record_type: int) -> list[str]:
+    if record_type != 1154:
+        return []
+    ctrp_conditions = (
+        ("smf1154_ctrp_trn", "read_unsigned_be(data + smf1154_ctrp, 2)"),
+        ("smf1154_c_offset", "smf1154_common_offset"),
+        ("smf1154_c_length", "smf1154_common_length"),
+        ("smf1154_c_number", "read_unsigned_be(data + smf1154_ctrp + 10, 2)"),
+        ("smf1154_subspec_offset", "smf1154_subspec_offset"),
+        (
+            "smf1154_subspec_length",
+            "read_unsigned_be(data + smf1154_ctrp + 16, 2)",
+        ),
+        (
+            "smf1154_subspec_number",
+            "read_unsigned_be(data + smf1154_ctrp + 18, 2)",
+        ),
+    )
+    common_integer_fields = (
+        ("smf1154_c_version", 0, 2),
+        ("smf1154_c_recordind", 2, 1),
+        ("smf1154_c_seqnumber", 3, 1),
+        ("smf1154_c_release", 4, 4),
+    )
+    common_byte_fields = (
+        ("smf1154_c_systemname", 8, 8),
+        ("smf1154_c_sysplexname", 16, 8),
+        ("smf1154_c_userid", 24, 8),
+        ("smf1154_c_jobname", 32, 8),
+        ("smf1154_c_requestid", 40, 16),
+        ("smf1154_c_correlator", 56, 4),
+    )
+    lines = [
+        "    {",
+        "        unsigned long long smf1154_ctrp;",
+        "        unsigned long long smf1154_common_offset;",
+        "        unsigned long long smf1154_common_length;",
+        "        unsigned long long smf1154_subspec_offset;",
+        "        unsigned long long smf1154_subspec_count;",
+        "        smf1154_ctrp = 24 + read_unsigned_be(data + 24, 2);",
+        "        if (smf1154_ctrp + 20 <= (unsigned long long)view->len) {",
+        "            smf1154_common_offset = read_unsigned_be(",
+        "                data + smf1154_ctrp + 4, 4);",
+        "            smf1154_common_length = read_unsigned_be(",
+        "                data + smf1154_ctrp + 8, 2);",
+        "            smf1154_subspec_offset = read_unsigned_be(",
+        "                data + smf1154_ctrp + 12, 4);",
+        "            if (",
+    ]
+    for index, (field_name, expression) in enumerate(ctrp_conditions):
+        suffix = " ||" if index < len(ctrp_conditions) - 1 else ") {"
+        lines.append(
+            f"                set_long(result, \"{field_name}\", "
+            f"{expression}) < 0{suffix}"
+        )
+    lines.extend(
+        [
+        "                Py_DECREF(result);",
+        "                return NULL;",
+        "            }",
+        "            if (append_self_defining_long_triplet_directory(",
+        "                result, \"relocate_sections\", data, view->len,",
+        "                smf1154_ctrp + 4, 2) < 0) {",
+        "                Py_DECREF(result);",
+        "                return NULL;",
+        "            }",
+        "            if (smf1154_common_offset + 60 <= ",
+        "                (unsigned long long)view->len &&",
+        "                smf1154_common_length >= 60) {",
+        "                if (",
+        ]
+    )
+    common_conditions: list[str] = []
+    for field_name, offset, size in common_integer_fields:
+        common_conditions.append(
+            f"set_long(result, \"{field_name}\", read_unsigned_be("
+            f"data + smf1154_common_offset + {offset}, {size})) < 0"
+        )
+    for field_name, offset, size in common_byte_fields:
+        common_conditions.append(
+            f"set_bytes(result, \"{field_name}\", data + "
+            f"smf1154_common_offset + {offset}, {size}) < 0"
+        )
+    for index, condition in enumerate(common_conditions):
+        suffix = " ||" if index < len(common_conditions) - 1 else ") {"
+        lines.append(f"                    {condition}{suffix}")
+    lines.extend(
+        [
+        "                    Py_DECREF(result);",
+        "                    return NULL;",
+        "                }",
+        "            }",
+        "            if (smf1154_subspec_offset + 4 <= ",
+        "                (unsigned long long)view->len) {",
+        "                smf1154_subspec_count = read_unsigned_be(",
+        "                    data + smf1154_subspec_offset, 2);",
+        "                if (append_self_defining_long_triplet_directory(",
+        "                    result, \"extended_relocate_sections\", data, view->len,",
+        "                    smf1154_subspec_offset + 4, smf1154_subspec_count) < 0) {",
+        "                    Py_DECREF(result);",
+        "                    return NULL;",
+        "                }",
+        "            }",
+        "        }",
+        "    }",
+        ]
+    )
+    return lines
+
+
+def _smf98_sds_parser_lines(
+    record_type: int, fields_by_name: dict[str, dict[str, object]]
+) -> list[str]:
+    if record_type != 98:
+        return []
+    triplet_count = fields_by_name.get("smf98sdstripletsnum")
+    if triplet_count is None:
+        return []
+    triplet_count_offset = int(cast(int, triplet_count["offset"]))
+    return [
+        "    if (append_self_defining_long_triplet_directory(",
+        "        result, \"relocate_sections\", data, view->len,",
+        "        48,",
+        f"        read_unsigned_be(data + {triplet_count_offset}, 2)) < 0) {{",
+        "        Py_DECREF(result);",
+        "        return NULL;",
+        "    }",
+    ]
 
 
 def _record_adjacent_section_fields(
