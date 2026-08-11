@@ -28,6 +28,7 @@ def native_type80_fields() -> dict[str, object]:
         "smf80rsd": b"\x00\x20\x23\x1f",
         "smf80uid": ebcdic("USERID  "),
         "smf80mix": ebcdic("USER123") + b"\x00\xff",
+        "smf80bin": ebcdic("IEFPROC A B C D E F G H"),
         "smf80ver": 8,
         "smf80re2": 9,
         "smf80vrm": ebcdic("7700"),
@@ -99,6 +100,7 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertIn("JOBNAME", decoded)
         self.assertIn("ALTUSER", decoded)
         self.assertIn("PERMIT", decoded)
+        self.assertNotIn("smf80bin", parsed.decoded_fields())
 
     def test_parse_record_can_find_decoded_user_tokens(self) -> None:
         from pysmf import records
@@ -131,6 +133,7 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertIn("USER123", tokens)
         self.assertIn("ALTUSER", tokens)
         self.assertIn("PERMIT", tokens)
+        self.assertNotIn("IEFPROC", tokens)
 
     def test_parse_record_exposes_smf80_relocation_sections(self) -> None:
         from pysmf import records

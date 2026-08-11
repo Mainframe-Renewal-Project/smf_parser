@@ -75,6 +75,8 @@ class StructuredSMFRecord:
                 text = value
             elif isinstance(value, bytes):
                 text = _clean_decoded_text(decode_ebcdic(value))
+                if not _is_plausible_fixed_text(text):
+                    continue
             else:
                 continue
             if text:
@@ -175,7 +177,7 @@ def _structured_record(
         if isinstance(value, bytes):
             raw_fields[key] = value
             text = _clean_decoded_text(decode_ebcdic(value))
-            scalar_fields[key] = text if text else value
+            scalar_fields[key] = text if _is_plausible_fixed_text(text) else value
         elif isinstance(value, int):
             scalar_fields[key] = value
             raw_fields[key] = value
@@ -205,6 +207,16 @@ def _clean_decoded_text(value: str) -> str:
     if len(text) < 2:
         return ""
     return text
+
+
+def _is_plausible_fixed_text(text: str) -> bool:
+    if not text:
+        return False
+    tokens = _decoded_tokens(text, min_length=1, max_length=64)
+    if not tokens:
+        return False
+    one_character_tokens = sum(1 for token in tokens if len(token) == 1)
+    return one_character_tokens * 3 <= len(tokens)
 
 
 def _text_matches(
