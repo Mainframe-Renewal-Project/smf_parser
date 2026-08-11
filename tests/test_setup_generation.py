@@ -442,6 +442,40 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertEqual([field["name"] for field in fields], ["smf21hdr", "trailing"])
         self.assertEqual([field["offset"] for field in fields], [0, 104])
 
+    def test_smf119_header_uses_ibm_c_primitive_fields(self) -> None:
+        module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "zos" / "ezasmf.h"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
+        fields = module._record_struct_fields(structs["Smf119Header"])
+        fields_by_name = {field["name"]: field for field in fields}
+
+        self.assertEqual(module._record_struct_name(119, structs), "Smf119Header")
+        self.assertEqual(fields_by_name["SMF119HDLength"]["offset"], 0)
+        self.assertEqual(fields_by_name["SMF119HDLength"]["size"], 2)
+        self.assertEqual(fields_by_name["SMF119HDType"]["offset"], 5)
+        self.assertEqual(fields_by_name["SMF119HDTime"]["size"], 4)
+        self.assertEqual(fields_by_name["SMF119HDSID"]["offset"], 14)
+        self.assertEqual(fields_by_name["SMF119HDSubType"]["offset"], 22)
+
+    def test_smf119_self_defining_sections_are_generated(self) -> None:
+        module = setup_module()
+
+        lines = "\n".join(module._smf119_parser_lines(119))
+
+        self.assertIn("SMF119SD_TRN", lines)
+        self.assertIn("SMF119IDOff", lines)
+        self.assertIn("SMF119IDLen", lines)
+        self.assertIn("SMF119IDNum", lines)
+        self.assertIn("append_self_defining_long_triplet_directory", lines)
+        self.assertIn('result, "relocate_sections", data, view->len, 28', lines)
+        self.assertIn('set_bytes(result, "SMF119TI_SYSName"', lines)
+        self.assertIn('set_bytes(result, "SMF119TI_Stack"', lines)
+        self.assertIn('set_bytes(result, "SMF119TI_UserID"', lines)
+
+        self.assertEqual(module._smf119_parser_lines(118), [])
+
     def test_record_struct_names_include_common_ibm_variants(self) -> None:
         module = setup_module()
         structs = {
@@ -450,12 +484,14 @@ class SetupGenerationTests(unittest.TestCase):
             "smfr98": "",
             "smfrcd6a": "",
             "smfrcd10": "",
+            "Smf119Header": "",
         }
 
         self.assertEqual(module._record_struct_name(83, structs), "smf83rcd")
         self.assertEqual(module._record_struct_name(124, structs), "smf124rec")
         self.assertEqual(module._record_struct_name(98, structs), "smfr98")
         self.assertEqual(module._record_struct_name(106, structs), "smfrcd6a")
+        self.assertEqual(module._record_struct_name(119, structs), "Smf119Header")
         self.assertIsNone(module._record_struct_name(16, structs))
 
 

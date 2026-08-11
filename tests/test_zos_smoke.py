@@ -105,7 +105,7 @@ def normalized_field_length(value: object) -> int | None:
 
 
 def is_expected_header_field_name(record_type: int, field_name: str) -> bool:
-    return field_name.startswith(f"smf{record_type}") or "_dummy_" in field_name
+    return field_name.lower().startswith(f"smf{record_type}") or "_dummy_" in field_name
 
 
 def section_signature(
@@ -629,6 +629,7 @@ class ZOSSmokeTests(unittest.TestCase):
         checks = {
             90: ("smf90rty",),
             98: ("smf98len", "smf98rty", "smf98sty"),
+            119: ("SMF119HDType", "SMF119HDSubType"),
             1154: ("smf1154len",),
         }
         for record_type, required_fields in checks.items():
@@ -814,6 +815,59 @@ class ZOSSmokeTests(unittest.TestCase):
             )
         if not saw_decoded_common_text:
             self.skipTest("dataset sample did not include decoded SMF type 1154 text")
+
+    def test_real_type119_tcpip_sections_are_exposed_when_present(self) -> None:
+        type119_records = self.records_of_type(119)
+        if not type119_records:
+            self.skipTest("dataset sample did not include parsed SMF type 119 records")
+
+        saw_self_defining_sections = False
+        saw_identification_section = False
+        saw_decoded_tcpip_text = False
+        for record in type119_records:
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                self.assertEqual(record.fields["SMF119HDType"], 119)
+                if record.subtype is not None:
+                    self.assertEqual(record.fields["SMF119HDSubType"], record.subtype)
+                for field_name in ("SMF119HDLength", "SMF119HDTime", "SMF119HDDate"):
+                    assert_non_negative_int_field(self, record, field_name)
+
+                if "SMF119SD_TRN" in record.fields:
+                    saw_self_defining_sections = True
+                    triplet_count = assert_non_negative_int_field(
+                        self, record, "SMF119SD_TRN"
+                    )
+                    for field_name in ("SMF119IDOff", "SMF119IDLen", "SMF119IDNum"):
+                        assert_non_negative_int_field(self, record, field_name)
+                    if triplet_count:
+                        self.assertTrue(record.sections)
+
+                if "SMF119TI_Stack" in record.fields:
+                    saw_identification_section = True
+                    for field_name in (
+                        "SMF119TI_SYSName",
+                        "SMF119TI_SysplexName",
+                        "SMF119TI_Stack",
+                        "SMF119TI_ReleaseID",
+                        "SMF119TI_Comp",
+                        "SMF119TI_ASName",
+                        "SMF119TI_UserID",
+                    ):
+                        if assert_decoded_field_is_searchable(self, record, field_name):
+                            saw_decoded_tcpip_text = True
+                    for field_name in (
+                        "SMF119TI_ASID",
+                        "SMF119TI_Reason",
+                        "SMF119TI_RecordID",
+                    ):
+                        assert_non_negative_int_field(self, record, field_name)
+
+        if not saw_self_defining_sections:
+            self.skipTest("dataset sample did not include SMF type 119 triplets")
+        if not saw_identification_section:
+            self.skipTest("dataset sample did not include SMF type 119 identification")
+        if not saw_decoded_tcpip_text:
+            self.skipTest("dataset sample did not include decoded SMF type 119 text")
 
     def test_real_type83_records_keep_fixed_header_layout(self) -> None:
         type83_records = self.records_of_type(83)

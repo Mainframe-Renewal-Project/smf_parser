@@ -21,7 +21,9 @@ DEFAULT_IBM_INCLUDE_DIR = Path("/usr/include/IBM")
 ROOT = Path(__file__).parent
 HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
 FIELD_RE = re.compile(
-    r"^\s*(?P<type>unsigned\s+char|char|u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
+    r"^\s*(?P<type>unsigned\s+char|char|unsigned\s+short|short|"
+    r"unsigned\s+int|int|unsigned\s+long\s+long|long\s+long|"
+    r"u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
     r"\s+(?P<name>[A-Za-z_]\w*)"
     r"(?:\[(?P<array>\d+)\])?"
     r"(?:\s*:\s*(?P<bits>\d+))?\s*;"
@@ -317,7 +319,11 @@ def _header_structs(header_text: str) -> dict[str, str]:
     structs: dict[str, str] = {}
     position = 0
     while True:
-        match = re.search(r"struct\s+([A-Za-z_]\w*)\s*\{", header_text[position:])
+        match = re.search(
+            r"struct\s+([A-Za-z_]\w*)(?:\s|/\*.*?\*/)*\{",
+            header_text[position:],
+            flags=re.DOTALL,
+        )
         if match is None:
             return structs
         name = match.group(1)
@@ -343,6 +349,8 @@ def _record_struct_name(record_type: int, structs: dict[str, str]) -> str | None
         f"smf{record_type}rcd",
         f"smf{record_type}rec",
         f"smfr{record_type}",
+        f"Smf{record_type}Header",
+        f"SMF{record_type}Header",
     ]
     if record_type >= 100:
         candidates.append(f"smfrcd{record_type:x}")
@@ -490,6 +498,12 @@ def _c_field_size(c_type: str) -> int:
     return {
         "char": 1,
         "unsigned char": 1,
+        "short": 2,
+        "unsigned short": 2,
+        "int": 4,
+        "unsigned int": 4,
+        "long long": 8,
+        "unsigned long long": 8,
         "uint8_t": 1,
         "int8_t": 1,
         "uint16_t": 2,
@@ -502,7 +516,7 @@ def _c_field_size(c_type: str) -> int:
 
 
 def _c_field_is_signed(c_type: str) -> bool:
-    return c_type.startswith("int") or c_type == "char"
+    return c_type.startswith("int") or c_type in {"char", "short", "int", "long long"}
 
 
 def _record_parser_function(record: dict[str, object]) -> list[str]:
@@ -582,12 +596,76 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         )
     )
     lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
+    lines.extend(_smf119_parser_lines(record_type))
     lines.extend(_smf98_sds_parser_lines(record_type, fields_by_name))
     lines.extend(_smf1154_common_parser_lines(record_type))
     lines.extend(_compact_racf_type80_section_parser_lines(record_type, fields_by_name))
     lines.extend(_racf_type83_subtype1_parser_lines(record_type))
     lines.extend(["    return result;", "}", ""])
     return lines
+
+
+def _smf119_parser_lines(record_type: int) -> list[str]:
+    if record_type != 119:
+        return []
+    return [
+        "    if (view->len >= (Py_ssize_t)36) {",
+        "        unsigned long long smf119_triplet_count = "
+        "read_unsigned_be(data + 24, 2);",
+        "        if (smf119_triplet_count > 0 && smf119_triplet_count <= 29 && ",
+        "            view->len >= (Py_ssize_t)(28 + (smf119_triplet_count * 8))) {",
+        "            unsigned long long smf119_ident_offset = "
+        "read_unsigned_be(data + 28, 4);",
+        "            unsigned long long smf119_ident_length = "
+        "read_unsigned_be(data + 32, 2);",
+        "            unsigned long long smf119_ident_count = "
+        "read_unsigned_be(data + 34, 2);",
+        "            if (set_long(result, \"SMF119SD_TRN\", "
+        "smf119_triplet_count) < 0 ||",
+        "                set_long(result, \"SMF119IDOff\", smf119_ident_offset) < 0 ||",
+        "                set_long(result, \"SMF119IDLen\", smf119_ident_length) < 0 ||",
+        "                set_long(result, \"SMF119IDNum\", smf119_ident_count) < 0) {",
+        "                Py_DECREF(result);",
+        "                return NULL;",
+        "            }",
+        "            if (append_self_defining_long_triplet_directory(",
+        "                result, \"relocate_sections\", data, view->len, 28,",
+        "                smf119_triplet_count) < 0) {",
+        "                Py_DECREF(result);",
+        "                return NULL;",
+        "            }",
+        "            if (smf119_ident_count > 0 && smf119_ident_length >= 56 &&",
+        "                smf119_ident_offset <= (unsigned long long)view->len &&",
+        "                (unsigned long long)view->len - smf119_ident_offset >= 56) {",
+        "                const unsigned char *smf119_ident = "
+        "data + smf119_ident_offset;",
+        "                if (set_bytes(result, \"SMF119TI_SYSName\", "
+        "smf119_ident + 0, 8) < 0 ||",
+        "                    set_bytes(result, \"SMF119TI_SysplexName\", "
+        "smf119_ident + 8, 8) < 0 ||",
+        "                    set_bytes(result, \"SMF119TI_Stack\", "
+        "smf119_ident + 16, 8) < 0 ||",
+        "                    set_bytes(result, \"SMF119TI_ReleaseID\", "
+        "smf119_ident + 24, 8) < 0 ||",
+        "                    set_bytes(result, \"SMF119TI_Comp\", "
+        "smf119_ident + 32, 8) < 0 ||",
+        "                    set_bytes(result, \"SMF119TI_ASName\", "
+        "smf119_ident + 40, 8) < 0 ||",
+        "                    set_bytes(result, \"SMF119TI_UserID\", "
+        "smf119_ident + 48, 8) < 0 ||",
+        "                    set_long(result, \"SMF119TI_ASID\", "
+        "read_unsigned_be(smf119_ident + 52, 2)) < 0 ||",
+        "                    set_long(result, \"SMF119TI_Reason\", "
+        "read_unsigned_be(smf119_ident + 54, 1)) < 0 ||",
+        "                    set_long(result, \"SMF119TI_RecordID\", "
+        "read_unsigned_be(smf119_ident + 55, 1)) < 0) {",
+        "                    Py_DECREF(result);",
+        "                    return NULL;",
+        "                }",
+        "            }",
+        "        }",
+        "    }",
+    ]
 
 
 def _smf1154_common_parser_lines(record_type: int) -> list[str]:
