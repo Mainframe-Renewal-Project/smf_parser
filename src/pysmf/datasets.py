@@ -26,6 +26,14 @@ from .reader import (
 )
 
 DatasetRecordFormat = RecordFormat
+try:
+    _native = import_module("pysmf._native")
+except ImportError:
+    _native = None
+_loaded_native = _native
+_native_is_plausible_identifier = (
+    getattr(_native, "is_plausible_identifier", None) if _native else None
+)
 _MIN_SMF_RECORD_LENGTH = 18
 _MAX_SMF_RECORD_LENGTH = 32756
 _MAX_SMF_TIME_HUNDREDTHS = 24 * 60 * 60 * 100
@@ -711,6 +719,12 @@ def _require_record_type_registry(
 def _is_plausible_identifier(
     value: bytes | bytearray | memoryview, *, allow_blank: bool
 ) -> bool:
+    native_check = _native_is_plausible_identifier
+    native = _native
+    if native is not _loaded_native and native is not None:
+        native_check = getattr(native, "is_plausible_identifier", None)
+    if native_check is not None:
+        return bool(native_check(value, allow_blank=allow_blank))
     stripped = bytes(value).rstrip(b"\x40\x00")
     if not stripped:
         return allow_blank

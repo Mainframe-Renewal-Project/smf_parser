@@ -149,10 +149,15 @@ class StructuredRecordTests(unittest.TestCase):
             del ignore_case, token
             return value.upper() in text.upper()
 
+        def is_plausible_fixed_text(text: str) -> bool:
+            calls.append("plausible")
+            return text != "IEFPROC A B C D E F G H"
+
         native = SimpleNamespace(
             parse_record=parse_native_record,
             clean_decoded_text=clean_decoded_text,
             clean_ebcdic_text=clean_ebcdic_text,
+            is_plausible_fixed_text=is_plausible_fixed_text,
             decoded_tokens=decoded_tokens,
             text_matches=text_matches,
         )
@@ -165,6 +170,7 @@ class StructuredRecordTests(unittest.TestCase):
 
         self.assertIn("ebcdic", calls)
         self.assertIn("clean", calls)
+        self.assertIn("plausible", calls)
         self.assertIn("tokens", calls)
         self.assertIn("matches", calls)
 

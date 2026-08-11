@@ -332,6 +332,9 @@ def _clean_ebcdic_text(value: bytes) -> str:
 
 
 def _is_plausible_fixed_text(text: str) -> bool:
+    plausible_native = getattr(_native, "is_plausible_fixed_text", None)
+    if plausible_native is not None:
+        return bool(plausible_native(text))
     if not text:
         return False
     tokens = _decoded_tokens(text, min_length=1, max_length=64)

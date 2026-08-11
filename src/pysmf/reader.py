@@ -27,6 +27,7 @@ _native_decode_smf_time_hundredths = (
 _native_is_packed_smf_date = (
     getattr(_native, "is_packed_smf_date", None) if _native else None
 )
+_native_decode_ebcdic = getattr(_native, "decode_ebcdic", None) if _native else None
 
 RecordFormat = Literal["auto", "smf", "rdw"]
 
@@ -124,6 +125,12 @@ class SMFRecord:
 def decode_ebcdic(value: bytes, *, encoding: str = "cp1047") -> str:
     """Decode a fixed-width EBCDIC field and strip EBCDIC spaces and NULs."""
 
+    native_decode = _native_decode_ebcdic
+    native = _native
+    if native is not _loaded_native and native is not None:
+        native_decode = getattr(native, "decode_ebcdic", None)
+    if native_decode is not None:
+        return native_decode(value, encoding=encoding)
     return value.rstrip(b"\x40\x00").decode(encoding, errors="replace")
 
 

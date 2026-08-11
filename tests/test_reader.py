@@ -187,6 +187,19 @@ class ReaderTests(unittest.TestCase):
         with patch.object(reader, "_native", native):
             self.assertEqual(reader.decode_smf_time_hundredths(b"\0\0\0\0"), 42)
 
+    def test_decode_ebcdic_uses_native_helper_when_available(self) -> None:
+        from pysmf import reader
+
+        def decode_ebcdic(data: bytes, *, encoding: str = "cp1047") -> str:
+            self.assertEqual(data, b"\xe2\xe8\xe2\xf1")
+            self.assertEqual(encoding, "cp1047")
+            return "SYS1"
+
+        native = SimpleNamespace(decode_ebcdic=decode_ebcdic)
+
+        with patch.object(reader, "_native", native):
+            self.assertEqual(reader.decode_ebcdic(b"\xe2\xe8\xe2\xf1"), "SYS1")
+
     def test_is_packed_smf_date_uses_native_helper_when_available(self) -> None:
         from pysmf import reader
 

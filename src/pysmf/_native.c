@@ -159,6 +159,10 @@ static PyObject *decode_ebcdic_text(const unsigned char *data, Py_ssize_t length
 #endif
 }
 
+static PyObject *decode_trimmed_ebcdic_text(const unsigned char *data, Py_ssize_t length, const char *encoding) {
+    return decode_ebcdic_text(data, trimmed_ebcdic_length(data, length), encoding);
+}
+
 int set_long(PyObject *dict, const char *key, long long value) {
     PyObject *object = PyLong_FromLongLong(value);
     int result;
@@ -665,6 +669,120 @@ static PyObject *py_clean_decoded_text(PyObject *self, PyObject *args) {
     return clean_decoded_text_object(text);
 }
 
+static PyObject *py_decode_ebcdic(PyObject *self, PyObject *args, PyObject *kwargs) {
+    static char *keywords[] = {"data", "encoding", NULL};
+    Py_buffer view;
+    const char *encoding = "cp1047";
+    PyObject *decoded;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "y*|s", keywords, &view, &encoding)) {
+        return NULL;
+    }
+    decoded = decode_trimmed_ebcdic_text((const unsigned char *)view.buf, view.len, encoding);
+    PyBuffer_Release(&view);
+    return decoded;
+}
+
+static int plausible_fixed_text_object(PyObject *text) {
+    Py_ssize_t length;
+    Py_ssize_t index;
+    Py_ssize_t token_length = 0;
+    Py_ssize_t token_count = 0;
+    Py_ssize_t one_character_tokens = 0;
+
+    if (PyUnicode_READY(text) < 0) {
+        return -1;
+    }
+    length = PyUnicode_GET_LENGTH(text);
+    if (length == 0) {
+        return 0;
+    }
+    for (index = 0; index <= length; index++) {
+        char character = '\0';
+        if (index < length) {
+            character = normalized_ascii(PyUnicode_READ_CHAR(text, index), 1);
+        }
+        if (character != '\0' && is_token_character(character)) {
+            token_length++;
+            continue;
+        }
+        if (token_length > 0 && token_length <= 64) {
+            token_count++;
+            if (token_length == 1) {
+                one_character_tokens++;
+            }
+        }
+        token_length = 0;
+    }
+    return token_count > 0 && one_character_tokens * 3 <= token_count;
+}
+
+static PyObject *py_is_plausible_fixed_text(PyObject *self, PyObject *args) {
+    PyObject *text;
+    int plausible;
+
+    if (!PyArg_ParseTuple(args, "U", &text)) {
+        return NULL;
+    }
+    plausible = plausible_fixed_text_object(text);
+    if (plausible < 0) {
+        return NULL;
+    }
+    if (plausible) {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+}
+
+static PyObject *py_is_plausible_identifier(PyObject *self, PyObject *args, PyObject *kwargs) {
+    static char *keywords[] = {"data", "allow_blank", "encoding", NULL};
+    Py_buffer view;
+    int allow_blank = 0;
+    const char *encoding = "cp1047";
+    Py_ssize_t length;
+    Py_ssize_t index;
+    PyObject *decoded;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "y*|ps", keywords, &view, &allow_blank, &encoding)) {
+        return NULL;
+    }
+    length = trimmed_ebcdic_length((const unsigned char *)view.buf, view.len);
+    if (length == 0) {
+        PyBuffer_Release(&view);
+        if (allow_blank) {
+            Py_RETURN_TRUE;
+        }
+        Py_RETURN_FALSE;
+    }
+
+    decoded = decode_ebcdic_text((const unsigned char *)view.buf, length, encoding);
+    PyBuffer_Release(&view);
+    if (decoded == NULL) {
+        return NULL;
+    }
+    if (PyUnicode_READY(decoded) < 0) {
+        Py_DECREF(decoded);
+        return NULL;
+    }
+
+    for (index = 0; index < PyUnicode_GET_LENGTH(decoded); index++) {
+        Py_UCS4 character = PyUnicode_READ_CHAR(decoded, index);
+        int allowed = (
+            (character >= 'A' && character <= 'Z') ||
+            (character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') ||
+            character == '#' || character == '$' || character == '@' || character == '_'
+        );
+        if (!allowed) {
+            Py_DECREF(decoded);
+            Py_RETURN_FALSE;
+        }
+    }
+
+    Py_DECREF(decoded);
+    Py_RETURN_TRUE;
+}
+
 static PyObject *py_clean_ebcdic_text(PyObject *self, PyObject *args, PyObject *kwargs) {
     static char *keywords[] = {"data", "encoding", NULL};
     Py_buffer view;
@@ -677,8 +795,8 @@ static PyObject *py_clean_ebcdic_text(PyObject *self, PyObject *args, PyObject *
         return NULL;
     }
 
-    length = trimmed_ebcdic_length((const unsigned char *)view.buf, view.len);
-    decoded = decode_ebcdic_text((const unsigned char *)view.buf, length, encoding);
+    length = view.len;
+    decoded = decode_trimmed_ebcdic_text((const unsigned char *)view.buf, length, encoding);
     PyBuffer_Release(&view);
     if (decoded == NULL) {
         return NULL;
@@ -947,8 +1065,11 @@ static PyMethodDef methods[] = {
     {"parse_record", generated_parse_record, METH_VARARGS, "Parse fixed SMF record fields using generated IBM C header mappings."},
     {"decode_smf_time_hundredths", py_decode_smf_time_hundredths, METH_VARARGS, "Decode a 4-byte SMF time field."},
     {"is_packed_smf_date", py_is_packed_smf_date, METH_VARARGS, "Return whether a 4-byte field is a packed SMF date."},
+    {"decode_ebcdic", (PyCFunction)py_decode_ebcdic, METH_VARARGS | METH_KEYWORDS, "Decode a fixed-width EBCDIC SMF field."},
     {"clean_decoded_text", py_clean_decoded_text, METH_VARARGS, "Clean decoded SMF text."},
     {"clean_ebcdic_text", (PyCFunction)py_clean_ebcdic_text, METH_VARARGS | METH_KEYWORDS, "Decode and clean EBCDIC SMF text."},
+    {"is_plausible_fixed_text", py_is_plausible_fixed_text, METH_VARARGS, "Return whether cleaned decoded text looks like fixed SMF text."},
+    {"is_plausible_identifier", (PyCFunction)py_is_plausible_identifier, METH_VARARGS | METH_KEYWORDS, "Return whether an EBCDIC field is a plausible SMF identifier."},
     {"decoded_tokens", (PyCFunction)py_decoded_tokens, METH_VARARGS | METH_KEYWORDS, "Return decoded SMF text tokens."},
     {"text_matches", (PyCFunction)py_text_matches, METH_VARARGS | METH_KEYWORDS, "Return whether decoded SMF text matches a value."},
     {"read_vbs_dataset", (PyCFunction)read_vbs_dataset, METH_VARARGS | METH_KEYWORDS, "Read logical records from a z/OS VBS dataset using native record I/O."},

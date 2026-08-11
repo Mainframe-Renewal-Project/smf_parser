@@ -88,6 +88,26 @@ class DatasetReaderTests(unittest.TestCase):
             _is_plausible_identifier(memoryview(ebcdic("SYS1")), allow_blank=False)
         )
 
+    def test_plausible_identifier_uses_native_helper_when_available(self) -> None:
+        calls: list[tuple[bytes, bool]] = []
+
+        def is_plausible_identifier(data: bytes, *, allow_blank: bool) -> bool:
+            calls.append((bytes(data), allow_blank))
+            return allow_blank
+
+        native = SimpleNamespace(is_plausible_identifier=is_plausible_identifier)
+
+        with patch.object(dataset_module, "_native", native):
+            self.assertFalse(
+                _is_plausible_identifier(ebcdic("SYS1"), allow_blank=False)
+            )
+            self.assertTrue(_is_plausible_identifier(b"\x40\x40", allow_blank=True))
+
+        self.assertEqual(
+            calls,
+            [(ebcdic("SYS1"), False), (b"\x40\x40", True)],
+        )
+
     def test_reads_dataset_records_that_are_smf_records(self) -> None:
         records = list(
             read_dataset_records(
