@@ -817,7 +817,7 @@ class ZOSSmokeTests(unittest.TestCase):
             self.skipTest("dataset sample did not include decoded SMF type 1154 text")
 
     def test_real_type119_tcpip_sections_are_exposed_when_present(self) -> None:
-        type119_records = self.records_of_type(119)
+        type119_records = self.structured_records_of_type(119)
         if not type119_records:
             self.skipTest("dataset sample did not include parsed SMF type 119 records")
 
