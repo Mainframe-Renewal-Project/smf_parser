@@ -60,8 +60,8 @@ class Racf83Subtype1SecurityAction:
     kind: Literal["racf83_subtype1_security"]
     security_struct: str
     variable_section_struct: str
-    subtype_primary_offset: int
-    subtype_secondary_offset: int
+    subtype_primary_offset: int | None
+    subtype_secondary_offset: int | None
     subtype_value: int
     sds_type_value: int
     security_minimum_length: int
@@ -77,8 +77,8 @@ class Smf119IdentOverlayAction:
     ident_offset_field: str
     ident_length_field: str
     ident_count_field: str
-    triplet_directory_offset: int
-    triplet_max_count: int
+    triplet_directory_anchor_field: str
+    triplet_max_count: int | None
     directory_key: str
     skip_ident_fields: tuple[str, ...]
 
@@ -209,11 +209,15 @@ def _build_special_record_actions(
                         kind="racf83_subtype1_security",
                         security_struct=str(spec["security_struct"]),
                         variable_section_struct=str(spec["variable_section_struct"]),
-                        subtype_primary_offset=int(
-                            cast(int, spec["subtype_primary_offset"])
+                        subtype_primary_offset=(
+                            int(cast(int, spec["subtype_primary_offset"]))
+                            if "subtype_primary_offset" in spec
+                            else None
                         ),
-                        subtype_secondary_offset=int(
-                            cast(int, spec["subtype_secondary_offset"])
+                        subtype_secondary_offset=(
+                            int(cast(int, spec["subtype_secondary_offset"]))
+                            if "subtype_secondary_offset" in spec
+                            else None
                         ),
                         subtype_value=int(cast(int, spec["subtype_value"])),
                         sds_type_value=int(cast(int, spec["sds_type_value"])),
@@ -240,10 +244,14 @@ def _build_special_record_actions(
                         ident_offset_field=str(spec["ident_offset_field"]),
                         ident_length_field=str(spec["ident_length_field"]),
                         ident_count_field=str(spec["ident_count_field"]),
-                        triplet_directory_offset=int(
-                            cast(int, spec["triplet_directory_offset"])
+                        triplet_directory_anchor_field=str(
+                            spec["triplet_directory_anchor_field"]
                         ),
-                        triplet_max_count=int(cast(int, spec["triplet_max_count"])),
+                        triplet_max_count=(
+                            int(cast(int, spec["triplet_max_count"]))
+                            if "triplet_max_count" in spec
+                            else None
+                        ),
                         directory_key=str(spec["directory_key"]),
                         skip_ident_fields=tuple(
                             str(name)
@@ -972,13 +980,13 @@ def _emit_racf83_subtype1_security(
     section_structs: dict[str, tuple[dict[str, object], ...]],
     special_structs: dict[str, tuple[dict[str, object], ...]],
 ) -> list[str]:
-    del fields_by_name
     if not isinstance(action, Racf83Subtype1SecurityAction):
         return []
     return _racf_type83_subtype1_parser_lines(
         record_type,
         section_structs,
         special_structs,
+        fields_by_name=fields_by_name,
         action=action,
     )
 
@@ -1007,6 +1015,11 @@ def _smf119_parser_lines(
     if not triplet_fields or not ident_fields:
         return []
     triplet_field_map = _field_map(triplet_fields)
+    triplet_directory_anchor_field = triplet_field_map.get(
+        typed_action.triplet_directory_anchor_field
+    )
+    if triplet_directory_anchor_field is None:
+        return []
     triplet_count_field = fields_by_name.get(typed_action.triplet_count_field)
     if triplet_count_field is None:
         triplet_count_field = triplet_field_map.get(typed_action.triplet_count_field)
@@ -1020,6 +1033,13 @@ def _smf119_parser_lines(
         or ident_count_field is None
     ):
         return []
+    triplet_directory_offset = int(
+        cast(int, triplet_directory_anchor_field["offset"])
+    )
+    triplet_max_count = _smf119_triplet_max_count(
+        triplet_fields,
+        fallback=typed_action.triplet_max_count,
+    )
     minimum_triplet_bytes = max(
         _field_end_offset(field)
         for field in (
@@ -1034,9 +1054,9 @@ def _smf119_parser_lines(
         "        unsigned long long smf119_triplet_count = "
         f"{_field_read_expression(triplet_count_field, base_expression='data')};",
         "        if (smf119_triplet_count > 0 && smf119_triplet_count <= "
-        f"{typed_action.triplet_max_count} && ",
+        f"{triplet_max_count} && ",
         "            view->len >= (Py_ssize_t)("
-        f"{typed_action.triplet_directory_offset} + (smf119_triplet_count * 8))) {{",
+        f"{triplet_directory_offset} + (smf119_triplet_count * 8))) {{",
         "            unsigned long long smf119_ident_offset = "
         f"{_field_read_expression(ident_offset_field, base_expression='data')};",
         "            unsigned long long smf119_ident_length = "
@@ -1056,7 +1076,7 @@ def _smf119_parser_lines(
         _append_long_triplet_directory_lines(
             indent="            ",
             key=typed_action.directory_key,
-            directory_expression=str(typed_action.triplet_directory_offset),
+            directory_expression=str(triplet_directory_offset),
             count_expression="smf119_triplet_count",
             inline_directory=True,
         )
@@ -1091,6 +1111,24 @@ def _smf119_parser_lines(
         ]
     )
     return lines
+
+
+def _smf119_triplet_max_count(
+    triplet_fields: tuple[dict[str, object], ...],
+    *,
+    fallback: int | None,
+) -> int:
+    section_indexes = [
+        int(match.group(1))
+        for field in triplet_fields
+        for match in [re.fullmatch(r"SMF119S(\d+)Off", str(field["name"]))]
+        if match is not None
+    ]
+    if section_indexes:
+        return max(section_indexes)
+    if fallback is not None:
+        return fallback
+    return 1
 
 
 def _smf1154_common_parser_lines(
@@ -1433,6 +1471,7 @@ def _racf_type83_subtype1_parser_lines(
     section_structs: dict[str, tuple[dict[str, object], ...]],
     special_structs: dict[str, tuple[dict[str, object], ...]],
     *,
+    fields_by_name: dict[str, dict[str, object]] | None = None,
     action: Racf83Subtype1SecurityAction | None = None,
 ) -> list[str]:
     typed_action = action
@@ -1448,6 +1487,21 @@ def _racf_type83_subtype1_parser_lines(
         return []
     header_integer_fields = typed_action.header_integer_fields
     header_integer_field_map = dict(header_integer_fields)
+    subtype_primary_offset = (
+        typed_action.subtype_primary_offset
+        if typed_action.subtype_primary_offset is not None
+        else 18
+    )
+    subtype_secondary_offset = (
+        typed_action.subtype_secondary_offset
+        if typed_action.subtype_secondary_offset is not None
+        else 22
+    )
+    if fields_by_name is not None:
+        subtype_anchor_field = fields_by_name.get("smf83df1")
+        if subtype_anchor_field is not None:
+            subtype_primary_offset = int(cast(int, subtype_anchor_field["offset"]))
+            subtype_secondary_offset = subtype_primary_offset + 4
     variable_section_layout = _variable_section_layout(
         section_structs.get(typed_action.variable_section_struct, ())
     )
@@ -1456,12 +1510,12 @@ def _racf_type83_subtype1_parser_lines(
         "        ((!is_packed_smf_date(data + 10) &&",
         "        is_packed_smf_date(data + 6) &&",
         "        read_unsigned_be(data + "
-        f"{typed_action.subtype_primary_offset}, 2) == "
+        f"{subtype_primary_offset}, 2) == "
         f"{typed_action.subtype_value}) ||",
         "        ((is_packed_smf_date(data + 10) ||",
         "        !is_packed_smf_date(data + 6)) &&",
         "        view->len >= 52 && read_unsigned_be(data + "
-        f"{typed_action.subtype_secondary_offset}, 2) == "
+        f"{subtype_secondary_offset}, 2) == "
         f"{typed_action.subtype_value}))) {{",
         "        unsigned long long smf83_subtype_offset;",
         "        unsigned long long smf83_sds_offset;",
@@ -1469,15 +1523,15 @@ def _racf_type83_subtype1_parser_lines(
         "        smf83_subtype_offset =",
         "            (!is_packed_smf_date(data + 10) &&",
         "            is_packed_smf_date(data + 6)) ? "
-        f"{typed_action.subtype_primary_offset} : "
-        f"{typed_action.subtype_secondary_offset};",
+        f"{subtype_primary_offset} : "
+        f"{subtype_secondary_offset};",
         "        smf83_sds_offset = smf83_subtype_offset + 2;",
         "        if (read_unsigned_be(data + smf83_sds_offset, 2) != "
         f"{typed_action.sds_type_value}) {{",
         "            return result;",
         "        }",
         "        if (smf83_subtype_offset == "
-        f"{typed_action.subtype_secondary_offset} &&",
+        f"{subtype_secondary_offset} &&",
         "            set_bytes(result, \"smf83ssi\", data + 18, 4) < 0) {",
         "            Py_DECREF(result);",
         "            return NULL;",
