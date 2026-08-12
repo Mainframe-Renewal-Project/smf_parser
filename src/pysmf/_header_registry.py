@@ -41,7 +41,7 @@ HEADER_TARGETS = (
             ("ifasmfr3.h", 28, 37),
             ("ifasmfr4.h", 37, 47),
             ("ifasmfr5.h", 47, 55),
-            ("ifasmfr9.h", 80, 85),
+            ("ifasmfr9.h", 80, 84),
             ("ifasmfra.h", 85, 104),
         )
     ),

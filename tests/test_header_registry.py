@@ -94,7 +94,8 @@ class HeaderRegistryTests(unittest.TestCase):
         self.assertEqual(record_types_for("ifasmfr3.h"), tuple(range(28, 37)))
         self.assertEqual(record_types_for("ifasmfr4.h"), tuple(range(37, 47)))
         self.assertEqual(record_types_for("ifasmfr5.h"), tuple(range(47, 55)))
-        self.assertEqual(record_types_for("ifasmfr9.h"), tuple(range(80, 85)))
+        self.assertEqual(record_types_for("ifasmfr9.h"), tuple(range(80, 84)))
+        self.assertEqual(record_types_for("iazsmf84.h"), (84,))
 
     def test_ifasmfcn_is_a_counter_constants_support_header(self) -> None:
         self.assertEqual(record_types_for("ifasmfcn.h"), (30, 1154))
