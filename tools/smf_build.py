@@ -684,12 +684,18 @@ def _smf119_parser_lines(
         "                Py_DECREF(result);",
         "                return NULL;",
         "            }",
-        "            if (append_self_defining_long_triplet_directory(",
-        "                result, \"relocate_sections\", data, view->len, 28,",
-        "                smf119_triplet_count) < 0) {",
-        "                Py_DECREF(result);",
-        "                return NULL;",
-        "            }",
+    ]
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="            ",
+            key="relocate_sections",
+            directory_expression="28",
+            count_expression="smf119_triplet_count",
+            inline_directory=True,
+        )
+    )
+    lines.extend(
+        [
         "            if (smf119_ident_count > 0 && smf119_ident_length > 0 &&",
         "                smf119_ident_offset <= (unsigned long long)view->len) {",
         "                unsigned long long smf119_ident_available = ",
@@ -699,7 +705,8 @@ def _smf119_parser_lines(
         "                if (smf119_ident_available > smf119_ident_length) {",
         "                    smf119_ident_available = smf119_ident_length;",
         "                }",
-    ]
+        ]
+    )
     lines.extend(
         _field_assignment_lines(
             ident_fields,
@@ -815,19 +822,25 @@ def _smf1154_common_parser_lines(
         )
     lines.extend(
         [
-        "                Py_DECREF(result);",
-        "                return NULL;",
-        "            }",
-        "            if (append_self_defining_long_triplet_directory(",
-        "                result, \"relocate_sections\", data, view->len,",
-        f"                smf1154_ctrp + {ctrp_directory_offset}, 2) < 0) {{",
-        "                Py_DECREF(result);",
-        "                return NULL;",
-        "            }",
-        f"            if (smf1154_common_offset + {common_length} <= ",
-        "                (unsigned long long)view->len &&",
-        f"                smf1154_common_length >= {common_length}) {{",
-        "                if (",
+            "                Py_DECREF(result);",
+            "                return NULL;",
+            "            }",
+        ]
+    )
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="            ",
+            key="relocate_sections",
+            directory_expression=f"smf1154_ctrp + {ctrp_directory_offset}",
+            count_expression="2",
+        )
+    )
+    lines.extend(
+        [
+            f"            if (smf1154_common_offset + {common_length} <= ",
+            "                (unsigned long long)view->len &&",
+            f"                smf1154_common_length >= {common_length}) {{",
+            "                if (",
         ]
     )
     common_conditions = list(
@@ -841,23 +854,29 @@ def _smf1154_common_parser_lines(
         lines.append(f"                    {condition}{suffix}")
     lines.extend(
         [
-        "                    Py_DECREF(result);",
-        "                    return NULL;",
-        "                }",
-        "            }",
-        "            if (smf1154_subspec_offset + 4 <= ",
-        "                (unsigned long long)view->len) {",
-        "                smf1154_subspec_count = read_unsigned_be(",
-        "                    data + smf1154_subspec_offset, 2);",
-        "                if (append_self_defining_long_triplet_directory(",
-        "                    result, \"extended_relocate_sections\", data, view->len,",
-        "                    smf1154_subspec_offset + 4, smf1154_subspec_count) < 0) {",
-        "                    Py_DECREF(result);",
-        "                    return NULL;",
-        "                }",
-        "            }",
-        "        }",
-        "    }",
+            "                    Py_DECREF(result);",
+            "                    return NULL;",
+            "                }",
+            "            }",
+            "            if (smf1154_subspec_offset + 4 <= ",
+            "                (unsigned long long)view->len) {",
+            "                smf1154_subspec_count = read_unsigned_be(",
+            "                    data + smf1154_subspec_offset, 2);",
+        ]
+    )
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="                ",
+            key="extended_relocate_sections",
+            directory_expression="smf1154_subspec_offset + 4",
+            count_expression="smf1154_subspec_count",
+        )
+    )
+    lines.extend(
+        [
+            "            }",
+            "        }",
+            "    }",
         ]
     )
     return lines
@@ -925,14 +944,41 @@ def _long_triplet_directory_action_lines(
     directory_expression: str,
     count_expression: str,
 ) -> list[str]:
+    return _append_long_triplet_directory_lines(
+        indent="    ",
+        key=key,
+        directory_expression=directory_expression,
+        count_expression=count_expression,
+    )
+
+
+def _append_long_triplet_directory_lines(
+    *,
+    indent: str,
+    key: str,
+    directory_expression: str,
+    count_expression: str,
+    inline_directory: bool = False,
+) -> list[str]:
+    inner_indent = f"{indent}    "
+    if inline_directory:
+        return [
+            f"{indent}if (append_self_defining_long_triplet_directory(",
+            f"{inner_indent}result, \"{key}\", data, view->len, "
+            f"{directory_expression},",
+            f"{inner_indent}{count_expression}) < 0) {{",
+            f"{inner_indent}Py_DECREF(result);",
+            f"{inner_indent}return NULL;",
+            f"{indent}}}",
+        ]
     return [
-        "    if (append_self_defining_long_triplet_directory(",
-        f"        result, \"{key}\", data, view->len,",
-        f"        {directory_expression},",
-        f"        {count_expression}) < 0) {{",
-        "        Py_DECREF(result);",
-        "        return NULL;",
-        "    }",
+        f"{indent}if (append_self_defining_long_triplet_directory(",
+        f"{inner_indent}result, \"{key}\", data, view->len,",
+        f"{inner_indent}{directory_expression},",
+        f"{inner_indent}{count_expression}) < 0) {{",
+        f"{inner_indent}Py_DECREF(result);",
+        f"{inner_indent}return NULL;",
+        f"{indent}}}",
     ]
 
 
