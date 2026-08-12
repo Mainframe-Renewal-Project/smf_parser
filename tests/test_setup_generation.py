@@ -409,6 +409,139 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("smf98_7_data", type98_record["special_structs"])
         self.assertIn("smf98sds", type98_record["special_structs"])
 
+    def test_inline_long_triplet_directory_action_is_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf41opd": {"name": "smf41opd", "offset": 40, "size": 2},
+            "smf41trp": {"name": "smf41trp", "offset": 42, "size": 2},
+        }
+
+        lines = "\n".join(
+            module._special_record_action_lines(
+                41,
+                (),
+                fields_by_name,
+                minimum_size=0,
+            )
+        )
+
+        self.assertIn("append_self_defining_long_triplet_directory", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn("40,", lines)
+        self.assertIn("read_unsigned_be(data + 42, 2)", lines)
+
+    def test_offset_long_triplet_directory_action_is_guarded(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf85oso": {"name": "smf85oso", "offset": 60, "size": 4},
+            "smf85osl": {"name": "smf85osl", "offset": 64, "size": 2},
+            "smf85osn": {"name": "smf85osn", "offset": 66, "size": 2},
+        }
+
+        lines = "\n".join(
+            module._special_record_action_lines(
+                85,
+                (),
+                fields_by_name,
+                minimum_size=0,
+            )
+        )
+
+        self.assertIn("if (read_unsigned_be(data + 60, 4) != 0", lines)
+        self.assertIn("read_unsigned_be(data + 66, 2) != 0", lines)
+        self.assertIn("read_unsigned_be(data + 64, 2) != 0", lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+
+    def test_smf113_sds_overlay_is_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf113sdl": {"name": "smf113sdl", "offset": 30, "size": 2},
+        }
+        special_structs = {
+            "smf113sds": (
+                {"name": "smf113sof", "offset": 0, "size": 4},
+                {"name": "smf113sln", "offset": 4, "size": 2},
+                {"name": "smf113son", "offset": 6, "size": 2},
+                {"name": "smf113iof", "offset": 8, "size": 4},
+                {"name": "smf113iln", "offset": 12, "size": 2},
+                {"name": "smf113ion", "offset": 14, "size": 2},
+                {"name": "smf113dof", "offset": 16, "size": 4},
+                {"name": "smf113dln", "offset": 20, "size": 2},
+                {"name": "smf113don", "offset": 22, "size": 2},
+            )
+        }
+
+        lines = "\n".join(
+            module._smf113_sds_parser_lines(113, fields_by_name, special_structs)
+        )
+
+        self.assertIn("smf113_sds_length", lines)
+        self.assertIn("read_unsigned_be(data + 30, 2)", lines)
+        self.assertIn("append_self_defining_long_triplet_directory", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+
+        self.assertEqual(
+            module._smf113_sds_parser_lines(80, fields_by_name, special_structs),
+            [],
+        )
+
+    def test_type124_conditional_subtype_triplets_are_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf124sty": {"name": "smf124sty", "offset": 22, "size": 2},
+            "smf124s1_port_offset": {
+                "name": "smf124s1_port_offset",
+                "offset": 32,
+                "size": 4,
+            },
+            "smf124s1_port_len": {"name": "smf124s1_port_len", "offset": 36, "size": 2},
+            "smf124s1_port_num": {"name": "smf124s1_port_num", "offset": 38, "size": 2},
+        }
+
+        lines = "\n".join(
+            module._special_record_action_lines(
+                124,
+                (),
+                fields_by_name,
+                minimum_size=0,
+            )
+        )
+
+        self.assertIn("read_unsigned_be(data + 22, 2) == 1", lines)
+        self.assertIn("read_unsigned_be(data + 32, 4) != 0", lines)
+        self.assertIn("read_unsigned_be(data + 38, 2) != 0", lines)
+        self.assertIn("read_unsigned_be(data + 36, 2) != 0", lines)
+        self.assertIn('result, "relocate_sections", data, view->len', lines)
+
+    def test_type42_subtype_overlay_directory_is_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf42sty": {"name": "smf42sty", "offset": 20, "size": 2},
+            "smf42ops": {"name": "smf42ops", "offset": 24, "size": 4},
+        }
+        special_structs = {
+            "smf42s1": (
+                {"name": "smf42bmo", "offset": 0, "size": 4},
+                {"name": "smf42bml", "offset": 4, "size": 2},
+                {"name": "smf42bmn", "offset": 6, "size": 2},
+            )
+        }
+
+        lines = "\n".join(
+            module._subtype_struct_overlay_directory_parser_lines(
+                42,
+                fields_by_name,
+                special_structs,
+            )
+        )
+
+        self.assertIn("read_unsigned_be(data + 20, 2) == 1", lines)
+        self.assertIn('set_long(result, "smf42_subtype", 1)', lines)
+        self.assertIn('set_long(result, "smf42bmo"', lines)
+        self.assertIn('set_long(result, "smf42bml"', lines)
+        self.assertIn('set_long(result, "smf42bmn"', lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(

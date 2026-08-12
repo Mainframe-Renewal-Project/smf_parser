@@ -82,6 +82,58 @@ class Smf98SubtypeOverlayAction:
 
 
 @dataclass(frozen=True)
+class InlineLongTripletDirectoryAction:
+    kind: Literal["inline_long_triplet_directory"]
+    key: str
+    directory_field: str
+    count_field: str
+
+
+@dataclass(frozen=True)
+class OffsetLongTripletDirectoryAction:
+    kind: Literal["offset_long_triplet_directory"]
+    key: str
+    offset_field: str
+    count_field: str
+    length_field: str | None
+
+
+@dataclass(frozen=True)
+class ConditionalOffsetLongTripletDirectoryAction:
+    kind: Literal["conditional_offset_long_triplet_directory"]
+    key: str
+    subtype_field_name: str
+    subtype_value: int
+    offset_field: str
+    count_field: str
+    length_field: str | None
+
+
+@dataclass(frozen=True)
+class SubtypeStructOverlayDirectoryAction:
+    kind: Literal["subtype_struct_overlay_directory"]
+    subtype_field_name: str
+    subtype_value: int
+    anchor_field_name: str
+    subtype_struct: str
+    required_subtype_names: tuple[str, ...]
+    triplet_count_name: str
+    triplet_length_name: str
+    triplet_directory_name: str
+    directory_key: str
+    minimum_section_length: int
+
+
+@dataclass(frozen=True)
+class Smf113SdsOverlayAction:
+    kind: Literal["smf113_sds_overlay"]
+    sds_struct: str
+    sds_length_field: str
+    minimum_section_length: int
+    directory_key: str
+
+
+@dataclass(frozen=True)
 class Racf83Subtype1SecurityAction:
     kind: Literal["racf83_subtype1_security"]
     security_struct: str
@@ -115,6 +167,11 @@ SpecialRecordAction = (
     | Smf1154CommonOverlayAction
     | Smf1154SubtypeOverlayAction
     | Smf98SubtypeOverlayAction
+    | InlineLongTripletDirectoryAction
+    | OffsetLongTripletDirectoryAction
+    | ConditionalOffsetLongTripletDirectoryAction
+    | SubtypeStructOverlayDirectoryAction
+    | Smf113SdsOverlayAction
     | Racf83Subtype1SecurityAction
     | Smf119IdentOverlayAction
 )
@@ -166,6 +223,49 @@ def _validate_special_record_actions(
                     raise RuntimeError(
                         "smf98_subtype_overlay action can only be registered "
                         f"for type 98, found {record_type}"
+                    )
+                continue
+            if isinstance(action, InlineLongTripletDirectoryAction):
+                if not action.directory_field or not action.count_field:
+                    raise RuntimeError(
+                        f"special record type {record_type} has missing inline "
+                        "triplet fields"
+                    )
+                continue
+            if isinstance(action, OffsetLongTripletDirectoryAction):
+                if not action.offset_field or not action.count_field:
+                    raise RuntimeError(
+                        f"special record type {record_type} has missing offset "
+                        "triplet fields"
+                    )
+                continue
+            if isinstance(action, ConditionalOffsetLongTripletDirectoryAction):
+                if (
+                    not action.subtype_field_name
+                    or not action.offset_field
+                    or not action.count_field
+                ):
+                    raise RuntimeError(
+                        f"special record type {record_type} has missing conditional "
+                        "triplet fields"
+                    )
+                continue
+            if isinstance(action, SubtypeStructOverlayDirectoryAction):
+                if (
+                    not action.subtype_field_name
+                    or not action.anchor_field_name
+                    or not action.subtype_struct
+                ):
+                    raise RuntimeError(
+                        f"special record type {record_type} has missing subtype "
+                        "overlay fields"
+                    )
+                continue
+            if isinstance(action, Smf113SdsOverlayAction):
+                if record_type != 113:
+                    raise RuntimeError(
+                        "smf113_sds_overlay action can only be registered "
+                        f"for type 113, found {record_type}"
                     )
                 continue
             if isinstance(action, Racf83Subtype1SecurityAction):
@@ -290,6 +390,86 @@ def _build_special_record_actions(
                         minimum_section_length=int(
                             cast(int, spec["minimum_section_length"])
                         ),
+                    )
+                )
+                continue
+            if kind == "inline_long_triplet_directory":
+                typed_actions.append(
+                    InlineLongTripletDirectoryAction(
+                        kind="inline_long_triplet_directory",
+                        key=str(spec["key"]),
+                        directory_field=str(spec["directory_field"]),
+                        count_field=str(spec["count_field"]),
+                    )
+                )
+                continue
+            if kind == "offset_long_triplet_directory":
+                typed_actions.append(
+                    OffsetLongTripletDirectoryAction(
+                        kind="offset_long_triplet_directory",
+                        key=str(spec["key"]),
+                        offset_field=str(spec["offset_field"]),
+                        count_field=str(spec["count_field"]),
+                        length_field=(
+                            str(spec["length_field"])
+                            if "length_field" in spec
+                            else None
+                        ),
+                    )
+                )
+                continue
+            if kind == "conditional_offset_long_triplet_directory":
+                typed_actions.append(
+                    ConditionalOffsetLongTripletDirectoryAction(
+                        kind="conditional_offset_long_triplet_directory",
+                        key=str(spec["key"]),
+                        subtype_field_name=str(spec["subtype_field_name"]),
+                        subtype_value=int(cast(int, spec["subtype_value"])),
+                        offset_field=str(spec["offset_field"]),
+                        count_field=str(spec["count_field"]),
+                        length_field=(
+                            str(spec["length_field"])
+                            if "length_field" in spec
+                            else None
+                        ),
+                    )
+                )
+                continue
+            if kind == "subtype_struct_overlay_directory":
+                typed_actions.append(
+                    SubtypeStructOverlayDirectoryAction(
+                        kind="subtype_struct_overlay_directory",
+                        subtype_field_name=str(spec["subtype_field_name"]),
+                        subtype_value=int(cast(int, spec["subtype_value"])),
+                        anchor_field_name=str(spec["anchor_field_name"]),
+                        subtype_struct=str(spec["subtype_struct"]),
+                        required_subtype_names=tuple(
+                            str(name)
+                            for name in cast(
+                                tuple[object, ...],
+                                spec["required_subtype_names"],
+                            )
+                        ),
+                        triplet_count_name=str(spec["triplet_count_name"]),
+                        triplet_length_name=str(spec["triplet_length_name"]),
+                        triplet_directory_name=str(spec["triplet_directory_name"]),
+                        directory_key=str(spec["directory_key"]),
+                        minimum_section_length=int(
+                            cast(int, spec["minimum_section_length"])
+                        ),
+                    )
+                )
+                continue
+            if kind == "smf113_sds_overlay":
+                typed_actions.append(
+                    Smf113SdsOverlayAction(
+                        kind="smf113_sds_overlay",
+                        sds_struct=str(spec["sds_struct"]),
+                        sds_length_field=str(spec["sds_length_field"]),
+                        minimum_section_length=int(
+                            cast(int, spec["minimum_section_length"])
+                        ),
+                        directory_key=str(spec["directory_key"]),
                     )
                 )
                 continue
@@ -1129,6 +1309,44 @@ def _emit_smf98_subtype_overlay(
     )
 
 
+def _emit_smf113_sds_overlay(
+    *,
+    action: SpecialRecordAction,
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+) -> list[str]:
+    del section_structs
+    if not isinstance(action, Smf113SdsOverlayAction):
+        return []
+    return _smf113_sds_parser_lines(
+        record_type,
+        fields_by_name,
+        special_structs,
+        action=action,
+    )
+
+
+def _emit_subtype_struct_overlay_directory(
+    *,
+    action: SpecialRecordAction,
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+) -> list[str]:
+    del section_structs
+    if not isinstance(action, SubtypeStructOverlayDirectoryAction):
+        return []
+    return _subtype_struct_overlay_directory_parser_lines(
+        record_type,
+        fields_by_name,
+        special_structs,
+        action=action,
+    )
+
+
 def _emit_racf83_subtype1_security(
     *,
     action: SpecialRecordAction,
@@ -1152,6 +1370,8 @@ _SPECIAL_OVERLAY_ACTION_EMITTERS: dict[str, Callable[..., list[str]]] = {
     "smf1154_common_overlay": _emit_smf1154_common_overlay,
     "smf1154_subtype_overlay": _emit_smf1154_subtype_overlay,
     "smf98_subtype_overlay": _emit_smf98_subtype_overlay,
+    "smf113_sds_overlay": _emit_smf113_sds_overlay,
+    "subtype_struct_overlay_directory": _emit_subtype_struct_overlay_directory,
     "racf83_subtype1_security": _emit_racf83_subtype1_security,
     "smf119_ident_overlay": _emit_smf119_ident_overlay,
 }
@@ -1727,6 +1947,190 @@ def _smf98_subtype_parser_lines(
     return lines
 
 
+def _smf113_sds_parser_lines(
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+    *,
+    action: Smf113SdsOverlayAction | None = None,
+) -> list[str]:
+    typed_action = action
+    if typed_action is None:
+        typed_action = _action_for_record_type(record_type, Smf113SdsOverlayAction)
+    if typed_action is None:
+        return []
+    sds_fields = special_structs.get(typed_action.sds_struct)
+    if not sds_fields:
+        return []
+    sds_length_field = fields_by_name.get(typed_action.sds_length_field)
+    if sds_length_field is None:
+        return []
+    sds_map = _field_map(sds_fields)
+    required_names = (
+        "smf113sof",
+        "smf113sln",
+        "smf113son",
+        "smf113iof",
+        "smf113iln",
+        "smf113ion",
+        "smf113dof",
+        "smf113dln",
+        "smf113don",
+    )
+    if not all(name in sds_map for name in required_names):
+        return []
+    sds_offset = max(
+        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
+        for field in fields_by_name.values()
+    )
+    minimum_section_length = max(
+        typed_action.minimum_section_length,
+        _struct_size(sds_fields),
+    )
+    length_expression = _field_read_expression(sds_length_field, base_expression="data")
+    lines = [
+        f"    if (view->len >= (Py_ssize_t){sds_offset + minimum_section_length}) {{",
+        "        unsigned long long smf113_sds_length;",
+        "        smf113_sds_length = " f"{length_expression};",
+        f"        if (smf113_sds_length >= {minimum_section_length}) {{",
+        "            if (",
+    ]
+    sds_conditions = list(
+        _field_assignment_conditions(
+            sds_fields,
+            base_expression=f"data + {sds_offset}",
+        )
+    )
+    for index, condition in enumerate(sds_conditions):
+        suffix = " ||" if index < len(sds_conditions) - 1 else ") {"
+        lines.append(f"                {condition}{suffix}")
+    lines.extend(
+        [
+            "                Py_DECREF(result);",
+            "                return NULL;",
+            "            }",
+        ]
+    )
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="            ",
+            key=typed_action.directory_key,
+            directory_expression=str(sds_offset),
+            count_expression="3",
+        )
+    )
+    lines.extend(["        }", "    }"])
+    return lines
+
+
+def _subtype_struct_overlay_directory_parser_lines(
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+    *,
+    action: SubtypeStructOverlayDirectoryAction | None = None,
+) -> list[str]:
+    typed_action = action
+    if typed_action is None:
+        typed_action = _action_for_record_type(
+            record_type,
+            SubtypeStructOverlayDirectoryAction,
+        )
+    if typed_action is None:
+        return []
+    subtype_field = fields_by_name.get(typed_action.subtype_field_name)
+    anchor_field = fields_by_name.get(typed_action.anchor_field_name)
+    subtype_fields = special_structs.get(typed_action.subtype_struct)
+    if subtype_field is None or anchor_field is None or not subtype_fields:
+        return []
+    subtype_map = _field_map(subtype_fields)
+    if not all(
+        name in subtype_map
+        for name in (
+            *typed_action.required_subtype_names,
+            typed_action.triplet_count_name,
+            typed_action.triplet_length_name,
+            typed_action.triplet_directory_name,
+        )
+    ):
+        return []
+
+    base_offset = int(cast(int, anchor_field["offset"]))
+    minimum_section_length = max(
+        typed_action.minimum_section_length,
+        _struct_size(subtype_fields),
+    )
+    triplet_count_field = subtype_map[typed_action.triplet_count_name]
+    triplet_length_field = subtype_map[typed_action.triplet_length_name]
+    triplet_directory_field = subtype_map[typed_action.triplet_directory_name]
+    subtype_conditions = list(
+        _field_assignment_conditions(
+            subtype_fields,
+            base_expression=f"data + {base_offset}",
+        )
+    )
+    subtype_base_expression = f"data + {base_offset}"
+    triplet_offset_expression = _field_read_expression(
+        triplet_directory_field,
+        base_expression=subtype_base_expression,
+    )
+    triplet_length_expression = _field_read_expression(
+        triplet_length_field,
+        base_expression=subtype_base_expression,
+    )
+    triplet_count_expression = _field_read_expression(
+        triplet_count_field,
+        base_expression=subtype_base_expression,
+    )
+
+    lines = [
+        "    if ("
+        f"{_field_read_expression(subtype_field, base_expression='data')} == "
+        f"{typed_action.subtype_value} &&",
+        f"        view->len >= (Py_ssize_t){base_offset + minimum_section_length}) {{",
+        "        unsigned long long subtype_triplet_offset;",
+        "        unsigned long long subtype_triplet_length;",
+        "        unsigned long long subtype_triplet_count;",
+        f"        if (set_long(result, \"smf{record_type}_subtype\", "
+        f"{typed_action.subtype_value}) < 0) {{",
+        "            Py_DECREF(result);",
+        "            return NULL;",
+        "        }",
+        "        if (",
+    ]
+    for index, condition in enumerate(subtype_conditions):
+        suffix = " ||" if index < len(subtype_conditions) - 1 else ") {"
+        lines.append(f"            {condition}{suffix}")
+    lines.extend(
+        [
+            "            Py_DECREF(result);",
+            "            return NULL;",
+            "        }",
+            "        subtype_triplet_offset = " f"{triplet_offset_expression};",
+            "        subtype_triplet_length = " f"{triplet_length_expression};",
+            "        subtype_triplet_count = " f"{triplet_count_expression};",
+            "        if (subtype_triplet_count > 0 &&",
+            "            subtype_triplet_length > 0 &&",
+            "            subtype_triplet_offset <= (unsigned long long)view->len) {",
+        ]
+    )
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="            ",
+            key=typed_action.directory_key,
+            directory_expression="subtype_triplet_offset",
+            count_expression="subtype_triplet_count",
+        )
+    )
+    lines.extend(
+        [
+            "        }",
+            "    }",
+        ]
+    )
+    return lines
+
+
 def _special_record_action_lines(
     record_type: int,
     fields: tuple[dict[str, object], ...],
@@ -1777,6 +2181,138 @@ def _special_record_action_lines(
                     count_offset=count_offset,
                 )
             )
+            continue
+        if isinstance(action, InlineLongTripletDirectoryAction):
+            directory_field = fields_by_name.get(action.directory_field)
+            count_field = fields_by_name.get(action.count_field)
+            if directory_field is None or count_field is None:
+                continue
+            count_expression = _field_read_expression(
+                count_field,
+                base_expression="data",
+            )
+            lines.extend(
+                _long_triplet_directory_action_lines(
+                    key=action.key,
+                    directory_expression=str(int(cast(int, directory_field["offset"]))),
+                    count_expression=count_expression,
+                )
+            )
+            continue
+        if isinstance(action, OffsetLongTripletDirectoryAction):
+            offset_field = fields_by_name.get(action.offset_field)
+            count_field = fields_by_name.get(action.count_field)
+            if offset_field is None or count_field is None:
+                continue
+            offset_expression = _field_read_expression(
+                offset_field,
+                base_expression="data",
+            )
+            count_expression = _field_read_expression(
+                count_field,
+                base_expression="data",
+            )
+            if action.length_field is not None:
+                length_field = fields_by_name.get(action.length_field)
+                if length_field is None:
+                    continue
+                length_expression = _field_read_expression(
+                    length_field,
+                    base_expression="data",
+                )
+                lines.extend(
+                    [
+                        "    if (" f"{offset_expression} != 0 &&",
+                        "        " f"{count_expression} != 0 &&",
+                        "        " f"{length_expression} != 0) {{",
+                    ]
+                )
+                lines.extend(
+                    _append_long_triplet_directory_lines(
+                        indent="        ",
+                        key=action.key,
+                        directory_expression=offset_expression,
+                        count_expression=count_expression,
+                    )
+                )
+                lines.append("    }")
+                continue
+            lines.extend(
+                [
+                    "    if (" f"{offset_expression} != 0 &&",
+                    "        " f"{count_expression} != 0) {{",
+                ]
+            )
+            lines.extend(
+                _append_long_triplet_directory_lines(
+                    indent="        ",
+                    key=action.key,
+                    directory_expression=offset_expression,
+                    count_expression=count_expression,
+                )
+            )
+            lines.append("    }")
+            continue
+        if isinstance(action, ConditionalOffsetLongTripletDirectoryAction):
+            subtype_field = fields_by_name.get(action.subtype_field_name)
+            offset_field = fields_by_name.get(action.offset_field)
+            count_field = fields_by_name.get(action.count_field)
+            if subtype_field is None or offset_field is None or count_field is None:
+                continue
+            subtype_expression = _field_read_expression(
+                subtype_field,
+                base_expression="data",
+            )
+            offset_expression = _field_read_expression(
+                offset_field,
+                base_expression="data",
+            )
+            count_expression = _field_read_expression(
+                count_field,
+                base_expression="data",
+            )
+            if action.length_field is not None:
+                length_field = fields_by_name.get(action.length_field)
+                if length_field is None:
+                    continue
+                length_expression = _field_read_expression(
+                    length_field,
+                    base_expression="data",
+                )
+                lines.extend(
+                    [
+                        "    if (" f"{subtype_expression} == {action.subtype_value} &&",
+                        "        " f"{offset_expression} != 0 &&",
+                        "        " f"{count_expression} != 0 &&",
+                        "        " f"{length_expression} != 0) {{",
+                    ]
+                )
+                lines.extend(
+                    _append_long_triplet_directory_lines(
+                        indent="        ",
+                        key=action.key,
+                        directory_expression=offset_expression,
+                        count_expression=count_expression,
+                    )
+                )
+                lines.append("    }")
+                continue
+            lines.extend(
+                [
+                    "    if (" f"{subtype_expression} == {action.subtype_value} &&",
+                    "        " f"{offset_expression} != 0 &&",
+                    "        " f"{count_expression} != 0) {{",
+                ]
+            )
+            lines.extend(
+                _append_long_triplet_directory_lines(
+                    indent="        ",
+                    key=action.key,
+                    directory_expression=offset_expression,
+                    count_expression=count_expression,
+                )
+            )
+            lines.append("    }")
             continue
         continue
     return lines

@@ -114,6 +114,20 @@ class HeaderRegistryTests(unittest.TestCase):
         }
         self.assertTrue({1, 3, 4, 5, 6, 7, 8}.issubset(subtype_values))
 
+    def test_additional_record_types_have_dynamic_special_actions() -> None:
+        expected_kinds = {
+            41: "inline_long_triplet_directory",
+            42: "inline_long_triplet_directory",
+            85: "offset_long_triplet_directory",
+            113: "smf113_sds_overlay",
+            124: "conditional_offset_long_triplet_directory",
+        }
+
+        for record_type, action_kind in expected_kinds.items():
+            actions = SPECIAL_RECORD_ACTIONS.get(record_type)
+            assert actions is not None
+            assert any(action.get("kind") == action_kind for action in actions)
+
 
 if __name__ == "__main__":
     unittest.main()
