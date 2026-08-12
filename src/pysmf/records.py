@@ -274,6 +274,35 @@ def read_structured_dataset(
     )
 
 
+def read_live_structured_dataset(
+    dataset_name: str,
+    *,
+    record_format: DatasetRecordFormat = "auto",
+    skip_short_records: bool = True,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
+    system_ids: Collection[str] | None = None,
+    record_types: Collection[int] | None = None,
+    records: int = 0,
+    offset: int = 0,
+    tail: bool = False,
+    errors: StructuredErrorMode = "raise",
+) -> Iterator[StructuredSMFRecord]:
+    """Read and parse structured records directly from an active SMF dataset."""
+
+    yield from read_structured_dataset(
+        dataset_name,
+        record_format=record_format,
+        skip_short_records=skip_short_records,
+        record_type_registry=record_type_registry,
+        system_ids=system_ids,
+        record_types=record_types,
+        records=records,
+        offset=offset,
+        tail=tail,
+        errors=errors,
+    )
+
+
 def _native_fields(record_type: int, data: bytes | bytearray | memoryview):
     native = _native
     parse_native_record = _native_parse_record

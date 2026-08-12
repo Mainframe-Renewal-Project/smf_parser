@@ -13,17 +13,20 @@ from pysmf import (
     ZOAUUnsupportedDatasetError,
     read_dataset,
     read_dataset_records,
+    read_live_dataset,
 )
 from tests.helpers import (
     ebcdic,
-    record_type_registry,
+    fail_read_as_bytes,
     native_reader,
+    record_type_registry,
     standard_record,
     vbs_block,
+    vbs_import_module_side_effect,
     vbs_segment,
     vbs_segment_word,
-    vbs_import_module_side_effect,
 )
+
 
 
 def false_record_candidate() -> bytes:
@@ -380,6 +383,54 @@ class DatasetReaderTests(unittest.TestCase):
 
         self.assertEqual([record.record_type for record in parsed], [30])
         self.assertEqual(calls, [("USER.SMF.UNLOAD.G0002V00", 10, 3, True)])
+
+    def test_read_live_dataset_uses_native_reader_for_plain_vbs_datasets(self) -> None:
+        calls: list[tuple[str, int, int, bool]] = []
+
+        def read_vbs_dataset(
+            dataset_name: str,
+            *,
+            records: int,
+            offset: int,
+            tail: bool,
+        ) -> list[bytes]:
+            calls.append((dataset_name, records, offset, tail))
+            return [standard_record(80, system_id="DBRA")]
+
+        def list_datasets(pattern: str) -> list[object]:
+            return [SimpleNamespace(name=pattern, record_format="VBS")]
+
+        fake_datasets = SimpleNamespace(
+            list_datasets=list_datasets,
+            read_as_bytes=fail_read_as_bytes,
+        )
+        fake_native = SimpleNamespace(read_vbs_dataset=read_vbs_dataset)
+
+        def import_module_side_effect(name: str):
+            if name == "zoautil_py.datasets":
+                return fake_datasets
+            if name == "pysmf._native":
+                return fake_native
+            raise ImportError(name)
+
+        with patch(
+            "pysmf.datasets.import_module",
+            side_effect=import_module_side_effect,
+        ):
+            parsed = list(
+                read_live_dataset(
+                    "SAMPLE.SMF.MAN1",
+                    records=5,
+                    offset=1,
+                    tail=True,
+                    record_type_registry=record_type_registry(80),
+                    system_ids={"DBRA"},
+                    record_types={80},
+                )
+            )
+
+        self.assertEqual([record.record_type for record in parsed], [80])
+        self.assertEqual(calls, [("SAMPLE.SMF.MAN1", 5, 1, True)])
 
     def test_read_dataset_keeps_native_reader_call_shape_without_record_type_filter(
         self,

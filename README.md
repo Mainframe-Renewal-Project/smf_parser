@@ -1,6 +1,7 @@
 # pySMF
 
-pySMF is a Python API for reading and interpreting z/OS SMF unloads.
+pySMF is a Python API for reading and interpreting z/OS SMF records from
+unload files and live z/OS datasets.
 
 Real SMF parsing is intended to run on z/OS. The parser relies on IBM-provided
 z/OS C SMF headers and a native extension built against those headers; copied
@@ -64,15 +65,32 @@ If a record type has admission support but no structured parser yet, use
 should plug into the same API rather than adding separate public entry points for
 each SMF family.
 
-On z/OS systems with ZOAU installed, SMF unloads can also be read directly from
-datasets. ZOAU is optional and is not declared as a package dependency because
-`zoautil_py` is not distributed on PyPI.
+On z/OS systems with ZOAU installed, SMF data can also be read directly from
+datasets. That includes both offline unload data sets and active VBS SMF MAN
+data sets when the native extension is available. ZOAU is optional and is not
+declared as a package dependency because `zoautil_py` is not distributed on
+PyPI.
 
 ```python
 from pysmf import read_dataset
 
 for record in read_dataset("USER.SMF.UNLOAD(0)", system_ids={"DBRA"}):
     print(record.record_type, record.subtype)
+```
+
+If you want to make that live-dataset intent explicit in application code, use
+the live aliases.
+
+```python
+from pysmf import read_live_dataset, read_live_structured_dataset
+
+for record in read_live_dataset("SAMPLE.SMF.MAN1", record_types={80}, tail=True):
+    print(record.record_type, record.subtype)
+
+for structured in read_live_structured_dataset(
+    "SAMPLE.SMF.MAN1", record_types={80}, errors="skip"
+):
+    print(structured["smf80evt"], structured.field_text("smf80usr"))
 ```
 
 For large unloads or GDGs, pass `record_types` to avoid returning records the

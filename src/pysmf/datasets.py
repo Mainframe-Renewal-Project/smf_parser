@@ -1,4 +1,4 @@
-"""Optional ZOAU integration for reading SMF unloads from z/OS datasets."""
+"""Optional ZOAU integration for reading SMF data from z/OS datasets."""
 
 from __future__ import annotations
 
@@ -94,6 +94,37 @@ def read_dataset(
         record_type_registry=record_type_registry,
         system_ids=system_ids,
         record_types=selected_record_types,
+    )
+
+
+def read_live_dataset(
+    dataset_name: str,
+    *,
+    record_format: DatasetRecordFormat = "auto",
+    skip_short_records: bool = True,
+    record_type_registry: SMFRecordTypeRegistry | None = None,
+    system_ids: Collection[str] | None = None,
+    record_types: Collection[int] | None = None,
+    records: int = 0,
+    offset: int = 0,
+    tail: bool = False,
+) -> Iterator[SMFRecord]:
+    """Yield SMF records from an active z/OS SMF dataset.
+
+    This is an intent-revealing alias for ``read_dataset()`` when the caller is
+    reading live MAN data sets rather than offline unload data sets.
+    """
+
+    yield from read_dataset(
+        dataset_name,
+        record_format=record_format,
+        skip_short_records=skip_short_records,
+        record_type_registry=record_type_registry,
+        system_ids=system_ids,
+        record_types=record_types,
+        records=records,
+        offset=offset,
+        tail=tail,
     )
 
 

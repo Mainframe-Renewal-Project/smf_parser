@@ -1,8 +1,8 @@
-"""Python tools for reading and interpreting z/OS SMF unloads."""
+"""Python tools for reading and interpreting z/OS SMF records and datasets."""
 
 from __future__ import annotations
 
-from .datasets import read_dataset, read_dataset_records
+from .datasets import read_dataset, read_dataset_records, read_live_dataset
 from .errors import (
     SMFError,
     SMFParseError,
@@ -30,6 +30,7 @@ from .records import (
     StructuredSMFRecord,
     parse_record,
     parse_records,
+    read_live_structured_dataset,
     read_structured_dataset,
     read_structured_file,
     read_structured_records,
@@ -56,7 +57,9 @@ __all__ = [
     "parse_records",
     "read_dataset",
     "read_dataset_records",
+    "read_live_dataset",
     "read_file",
+    "read_live_structured_dataset",
     "read_records",
     "read_structured_dataset",
     "read_structured_file",
