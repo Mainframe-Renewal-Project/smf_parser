@@ -128,6 +128,39 @@ class HeaderRegistryTests(unittest.TestCase):
             assert actions is not None
             assert any(action.get("kind") == action_kind for action in actions)
 
+    def test_type42_subtype_overlay_actions_cover_known_subtypes(self) -> None:
+        actions = SPECIAL_RECORD_ACTIONS[42]
+        subtype_values = {
+            int(action["subtype_value"])
+            for action in actions
+            if action.get("kind") == "subtype_struct_overlay_directory"
+        }
+        self.assertTrue(
+            {
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                9,
+                10,
+                11,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                27,
+            }.issubset(subtype_values)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
