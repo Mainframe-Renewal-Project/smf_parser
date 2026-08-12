@@ -174,6 +174,25 @@ class HeaderRegistryTests(unittest.TestCase):
         subtype_values = {int(action["subtype_value"]) for action in above_bar_actions}
         self.assertEqual(subtype_values, {15, 16, 19})
 
+    def test_type80_uses_generic_relocate_section_fallback_only(self) -> None:
+        actions = SPECIAL_RECORD_ACTIONS[80]
+
+        self.assertTrue(
+            any(
+                action.get("kind") == "compact_section_directory_fallback"
+                and action.get("key") == "relocate_sections"
+                and action.get("anchor_field") == "smf80des"
+                and action.get("relocate_field") == "smf80evq"
+                for action in actions
+            )
+        )
+        self.assertFalse(
+            any(
+                action.get("kind") in {"smf98_subtype_overlay", "subtype_struct_overlay_directory"}
+                for action in actions
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
