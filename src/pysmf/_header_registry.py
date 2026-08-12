@@ -235,3 +235,8 @@ SPECIAL_RECORD_STRUCT_NAMES = _derive_special_record_struct_names(
     _EXPLICIT_SPECIAL_RECORD_STRUCT_NAMES,
     SPECIAL_RECORD_ACTIONS,
 )
+
+# Optional per-record parser generation behavior toggles.
+RECORD_TYPE_OPTIONS = {
+    1154: {"allow_empty_fields": True},
+}

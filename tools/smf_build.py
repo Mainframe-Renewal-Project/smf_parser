@@ -293,12 +293,23 @@ def _special_record_action_specs() -> dict[int, tuple[dict[str, object], ...]]:
     return specs
 
 
+def _record_type_options() -> dict[int, dict[str, object]]:
+    module = _header_registry_module()
+    raw_options = getattr(module, "RECORD_TYPE_OPTIONS", {})
+    options: dict[int, dict[str, object]] = {}
+    for record_type, values in cast(dict[object, object], raw_options).items():
+        typed_record_type = int(cast(int | str, record_type))
+        options[typed_record_type] = cast(dict[str, object], values)
+    return options
+
+
 SPECIAL_RECORD_STRUCT_NAMES: dict[int, tuple[str, ...]] = _special_record_struct_names()
 SPECIAL_RECORD_ACTIONS: dict[int, tuple[SpecialRecordAction, ...]] = (
     _validate_special_record_actions(
         _build_special_record_actions(_special_record_action_specs())
     )
 )
+RECORD_TYPE_OPTIONS: dict[int, dict[str, object]] = _record_type_options()
 FIELD_RE = re.compile(
     r"^\s*(?P<type>unsigned\s+char|char|unsigned\s+short|short|"
     r"unsigned\s+int|int|unsigned\s+long\s+long|long\s+long|"
@@ -559,7 +570,9 @@ def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
             if struct_name is None:
                 continue
             fields = _record_struct_fields(structs[struct_name])
-            if not fields and int(record_type) != 1154:
+            record_options = RECORD_TYPE_OPTIONS.get(int(record_type), {})
+            allow_empty_fields = bool(record_options.get("allow_empty_fields", False))
+            if not fields and not allow_empty_fields:
                 continue
             records.append(
                 {
@@ -858,7 +871,6 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         )
     )
     lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
-    lines.extend(_smf119_parser_lines(record_type, fields_by_name, special_structs))
     lines.extend(
         _special_record_action_lines(
             record_type,
@@ -867,15 +879,47 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
             minimum_size=minimum_size,
         )
     )
-    lines.extend(_smf1154_common_parser_lines(record_type, special_structs))
     lines.extend(
-        _racf_type83_subtype1_parser_lines(
+        _special_overlay_parser_lines(
             record_type,
+            fields_by_name,
             section_structs,
             special_structs,
         )
     )
     lines.extend(["    return result;", "}", ""])
+    return lines
+
+
+def _special_overlay_parser_lines(
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+) -> list[str]:
+    lines: list[str] = []
+    for action in SPECIAL_RECORD_ACTIONS.get(record_type, ()):
+        if isinstance(action, Smf119IdentOverlayAction):
+            lines.extend(
+                _smf119_parser_lines(
+                    record_type,
+                    fields_by_name,
+                    special_structs,
+                )
+            )
+            continue
+        if isinstance(action, Smf1154CommonOverlayAction):
+            lines.extend(_smf1154_common_parser_lines(record_type, special_structs))
+            continue
+        if isinstance(action, Racf83Subtype1SecurityAction):
+            lines.extend(
+                _racf_type83_subtype1_parser_lines(
+                    record_type,
+                    section_structs,
+                    special_structs,
+                )
+            )
+            continue
     return lines
 
 
