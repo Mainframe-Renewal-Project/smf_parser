@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from pysmf._header_registry import HEADER_TARGETS
+from pysmf._header_registry import HEADER_TARGETS, SPECIAL_RECORD_ACTIONS
 
 IBM_SMF_HEADER_NAMES = {
     "BPXYSMFR",
@@ -104,6 +104,15 @@ class HeaderRegistryTests(unittest.TestCase):
 
         self.assertEqual(expected_registry_names - resolved_ibm_names(), set())
         self.assertEqual(AGGREGATE_ONLY_HEADER_NAMES & resolved_ibm_names(), set())
+
+    def test_type98_subtype_overlays_cover_known_wic_subtypes(self) -> None:
+        actions = SPECIAL_RECORD_ACTIONS[98]
+        subtype_values = {
+            int(action["subtype_value"])
+            for action in actions
+            if action.get("kind") == "smf98_subtype_overlay"
+        }
+        self.assertTrue({1, 3, 4, 5, 6, 7, 8}.issubset(subtype_values))
 
 
 if __name__ == "__main__":
