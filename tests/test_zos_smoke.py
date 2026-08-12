@@ -136,14 +136,15 @@ def assert_decoded_field_is_searchable(
     if field_name not in record.fields:
         return False
     test_case.assertIsInstance(record.raw_fields[field_name], bytes)
+    test_case.assertIsInstance(record.fields[field_name], str)
     text = record.field_text(field_name)
     clean_text = record.clean_field_text(field_name)
     test_case.assertIsInstance(text, str)
     test_case.assertIsInstance(clean_text, str)
-    decoded_fields = record.decoded_fields()
-    if field_name not in decoded_fields:
+    text_fields = record.text_fields()
+    if field_name not in text_fields:
         return False
-    test_case.assertEqual(decoded_fields[field_name], clean_text)
+    test_case.assertEqual(text_fields[field_name], clean_text)
     test_case.assertIn(clean_text, record.decoded_texts())
     test_case.assertTrue(record.find_text(clean_text))
     return True
@@ -465,7 +466,6 @@ class ZOSSmokeTests(unittest.TestCase):
 
     def test_structured_records_expose_consistent_scalar_outputs(self) -> None:
         saw_text_field = False
-        saw_bytes_field = False
         saw_int_field = False
 
         for record in self.records:
@@ -478,10 +478,6 @@ class ZOSSmokeTests(unittest.TestCase):
                         saw_text_field = True
                         self.assertIsInstance(raw_value, bytes)
                         self.assertEqual(record.field_text(field_name), value)
-                    elif isinstance(value, bytes):
-                        saw_bytes_field = True
-                        self.assertIsInstance(raw_value, bytes)
-                        self.assertIsInstance(record.field_text(field_name), str)
                     else:
                         saw_int_field = True
                         self.assertIsInstance(raw_value, int)
@@ -489,7 +485,6 @@ class ZOSSmokeTests(unittest.TestCase):
                             record.field_text(field_name)
 
         self.assertTrue(saw_text_field, "expected at least one decoded text field")
-        self.assertTrue(saw_bytes_field, "expected at least one retained bytes field")
         self.assertTrue(saw_int_field, "expected at least one integer field")
 
     def test_decoded_output_helpers_return_searchable_content(self) -> None:
@@ -498,7 +493,7 @@ class ZOSSmokeTests(unittest.TestCase):
             self.skipTest("dataset sample did not include decoded text output")
 
         for record in decoded_records[:25]:
-            decoded_fields = record.decoded_fields()
+            decoded_fields = record.text_fields()
             decoded_texts = record.decoded_texts()
             tokens = record.decoded_tokens(min_length=2)
             with self.subTest(record_type=record.record_type, offset=record.offset):
@@ -638,7 +633,7 @@ class ZOSSmokeTests(unittest.TestCase):
     def test_real_dataset_text_helpers_do_not_fail(self) -> None:
         for record in self.records:
             with self.subTest(record_type=record.record_type, offset=record.offset):
-                self.assertIsInstance(record.decoded_fields(), dict)
+                self.assertIsInstance(record.text_fields(), dict)
                 self.assertIsInstance(record.decoded_texts(), tuple)
 
     def test_recent_generator_features_remain_available_when_present(self) -> None:

@@ -48,13 +48,13 @@ class StructuredSMFRecord:
     """Header-backed fields and variable sections for one SMF record."""
 
     record_type: int
-    fields: dict[str, int | bytes | str]
+    fields: dict[str, int | str]
     sections: tuple[SMFFieldSection, ...] = ()
     extended_sections: tuple[SMFFieldSection, ...] = ()
     raw_fields: dict[str, int | bytes] = field(default_factory=dict)
     source: SMFRecord | None = None
 
-    def __getitem__(self, key: str) -> int | bytes | str:
+    def __getitem__(self, key: str) -> int | str:
         return self.fields[key]
 
     @property
@@ -93,8 +93,8 @@ class StructuredSMFRecord:
     def clean_field_text(self, key: str) -> str:
         return _clean_decoded_text(self.field_text(key))
 
-    def decoded_fields(self) -> dict[str, str]:
-        """Return printable decoded text for all bytes fields in the record."""
+    def text_fields(self) -> dict[str, str]:
+        """Return decoded fixed-field text values suitable for search/display."""
 
         decoded: dict[str, str] = {}
         for key, value in self.fields.items():
@@ -110,11 +110,16 @@ class StructuredSMFRecord:
                 decoded[key] = text
         return decoded
 
+    def decoded_fields(self) -> dict[str, str]:
+        """Backward-compatible alias for text_fields()."""
+
+        return self.text_fields()
+
     def decoded_texts(self) -> tuple[str, ...]:
         """Return decoded printable text from fixed fields and sections."""
 
         values: list[str] = []
-        values.extend(self.decoded_fields().values())
+        values.extend(self.text_fields().values())
         for section in self.sections:
             text = section.clean_text
             if text:
@@ -290,6 +295,10 @@ def _structured_record(
         scalar_fields, raw_fields, regular_sections, extended_sections = (
             structured_fields_native(fields)
         )
+        scalar_fields, raw_fields = _normalize_scalar_and_raw_fields(
+            scalar_fields,
+            raw_fields,
+        )
         return StructuredSMFRecord(
             record_type=record_type,
             fields=scalar_fields,
@@ -301,20 +310,23 @@ def _structured_record(
 
     regular_sections = _sections(fields, "relocate_sections")
     extended_sections = _sections(fields, "extended_relocate_sections")
-    scalar_fields: dict[str, int | bytes | str] = {}
+    scalar_fields: dict[str, int | str] = {}
     raw_fields: dict[str, int | bytes] = {}
     for key, value in fields.items():
         if key in {"relocate_sections", "extended_relocate_sections"}:
             continue
         if isinstance(value, bytes):
             raw_fields[key] = value
-            text = _clean_ebcdic_text(value)
-            scalar_fields[key] = text if _is_plausible_fixed_text(text) else value
+            scalar_fields[key] = _clean_ebcdic_text(value)
         elif isinstance(value, int):
             scalar_fields[key] = value
             raw_fields[key] = value
         else:
             raise TypeError(f"SMF field {key!r} has unsupported value {value!r}")
+    scalar_fields, raw_fields = _normalize_scalar_and_raw_fields(
+        scalar_fields,
+        raw_fields,
+    )
     return StructuredSMFRecord(
         record_type=record_type,
         fields=scalar_fields,
@@ -336,6 +348,28 @@ def _clean_decoded_text(value: str) -> str:
     if len(text) < 2:
         return ""
     return text
+
+
+def _normalize_scalar_and_raw_fields(
+    scalar_fields: Mapping[str, int | bytes | str],
+    raw_fields: Mapping[str, int | bytes],
+) -> tuple[dict[str, int | str], dict[str, int | bytes]]:
+    normalized_fields: dict[str, int | str] = {}
+    normalized_raw = dict(raw_fields)
+    for key, value in scalar_fields.items():
+        if isinstance(value, bytes):
+            normalized_raw.setdefault(key, value)
+            normalized_fields[key] = _clean_ebcdic_text(value)
+            continue
+        if isinstance(value, int):
+            normalized_fields[key] = value
+            normalized_raw.setdefault(key, value)
+            continue
+        if isinstance(value, str):
+            normalized_fields[key] = value
+            continue
+        raise TypeError(f"SMF field {key!r} has unsupported value {value!r}")
+    return normalized_fields, normalized_raw
 
 
 def _clean_ebcdic_text(value: bytes) -> str:

@@ -151,12 +151,12 @@ class StructuredRecordTests(unittest.TestCase):
             parsed = parse_record(standard_record(80))
 
         self.assertEqual(parsed.clean_field_text("smf80mix"), "USER123")
-        self.assertEqual(parsed.decoded_fields()["smf80usr"], "SECADM1")
+        self.assertEqual(parsed.text_fields()["smf80usr"], "SECADM1")
         decoded = parsed.decoded_texts()
         self.assertIn("JOBNAME", decoded)
         self.assertIn("ALTUSER", decoded)
         self.assertIn("PERMIT", decoded)
-        self.assertNotIn("smf80bin", parsed.decoded_fields())
+        self.assertNotIn("smf80bin", parsed.text_fields())
 
     def test_decoded_text_helpers_use_native_extension_when_available(self) -> None:
         from pysmf import records
