@@ -736,6 +736,258 @@ class ZOSSmokeTests(unittest.TestCase):
                 "dataset sample did not include SMF type 90 adjacent triplets"
             )
 
+    def test_real_type41_triplet_directory_is_consistent_when_present(self) -> None:
+        type41_records = self.records_of_type(41)
+        if not type41_records:
+            self.skipTest("dataset sample did not include parsed SMF type 41 records")
+
+        saw_triplets = False
+        saw_populated_triplets = False
+        for record in type41_records:
+            if "smf41trp" not in record.fields:
+                continue
+            saw_triplets = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                triplet_count = assert_non_negative_int_field(self, record, "smf41trp")
+                if "smf41opd" in record.fields:
+                    assert_non_negative_int_field(self, record, "smf41opd")
+                if triplet_count:
+                    saw_populated_triplets = True
+                    self.assertTrue(record.sections)
+
+        if not saw_triplets:
+            self.skipTest("dataset sample did not include SMF type 41 triplet fields")
+        if not saw_populated_triplets:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 41 triplets"
+            )
+
+    def test_real_type42_subtype_triplets_are_consistent_when_present(self) -> None:
+        type42_records = self.records_of_type(42)
+        if not type42_records:
+            self.skipTest("dataset sample did not include parsed SMF type 42 records")
+
+        subtype_triplets = {
+            1: ("smf42bmo", "smf42bml", "smf42bmn"),
+            2: ("smf42cuo", "smf42cul", "smf42cun"),
+            3: ("smf42eao", "smf42eal", "smf42ean"),
+            4: ("smf42cco", "smf42ccl", "smf42ccn"),
+            5: ("smf42sro", "smf42srl", "smf42srn"),
+            6: ("smf42jho", "smf42jhl", "smf42jhn"),
+            9: ("smf42abo", "smf42abl", "smf42abn"),
+            10: ("smf42vsf", "smf42vsl", "smf42vsn"),
+            11: ("smf42xro", "smf42xrl", "smf42xrn"),
+            15: ("smf42fc1", "smf42fc2", "smf42fc3"),
+            16: ("smf42gd1", "smf42gd2", "smf42gd3"),
+            17: ("smf42hl1", "smf42hl2", "smf42hl3"),
+            18: ("smf42im1", "smf42im2", "smf42im3"),
+            19: ("smf42jn1", "smf42jn2", "smf42jn3"),
+            20: ("smf42kn1", "smf42kn2", "smf42kn3"),
+            21: ("smf42ln1", "smf42ln2", "smf42ln3"),
+            22: ("smf4222aud", "smf4222lad", "smf4222nad"),
+            23: ("smf4223sec", "smf4223lsc", "smf4223nsc"),
+            24: ("smf42pn1", "smf42pn2", "smf42pn3"),
+            25: ("smf42qn1", "smf42qn2", "smf42qn3"),
+            27: ("smf4227r1", "smf4227r2", "smf4227r3"),
+        }
+        saw_subtype_triplets = False
+        saw_populated_subtype_triplets = False
+
+        for record in type42_records:
+            subtype = record.subtype
+            if subtype not in subtype_triplets:
+                continue
+            offset_name, length_name, count_name = subtype_triplets[subtype]
+            if count_name not in record.fields:
+                continue
+            saw_subtype_triplets = True
+            with self.subTest(offset=record.offset, subtype=subtype):
+                offset = assert_non_negative_int_field(self, record, offset_name)
+                length = assert_non_negative_int_field(self, record, length_name)
+                count = assert_non_negative_int_field(self, record, count_name)
+                if count:
+                    saw_populated_subtype_triplets = True
+                    self.assertGreaterEqual(offset, 0)
+                    self.assertGreater(length, 0)
+                    self.assertTrue(record.extended_sections)
+
+        if not saw_subtype_triplets:
+            self.skipTest(
+                "dataset sample did not include SMF type 42 subtype triplet fields"
+            )
+        if not saw_populated_subtype_triplets:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 42 subtype "
+                "triplets"
+            )
+
+    def test_real_type42_above_bar_triplets_are_exposed_when_present(self) -> None:
+        type42_records = self.records_of_type(42)
+        if not type42_records:
+            self.skipTest("dataset sample did not include parsed SMF type 42 records")
+
+        above_bar_triplets = {
+            15: ("smf42afc1", "smf42afc2", "smf42afc3"),
+            16: ("smf42agd1", "smf42agd2", "smf42agd3"),
+            19: ("smf42ajn1", "smf42ajn2", "smf42ajn3"),
+        }
+        saw_above_bar_fields = False
+        saw_populated_above_bar = False
+
+        for record in type42_records:
+            subtype = record.subtype
+            if subtype not in above_bar_triplets:
+                continue
+            offset_name, length_name, count_name = above_bar_triplets[subtype]
+            if count_name not in record.fields:
+                continue
+            saw_above_bar_fields = True
+            with self.subTest(offset=record.offset, subtype=subtype):
+                assert_non_negative_int_field(self, record, offset_name)
+                length = assert_non_negative_int_field(self, record, length_name)
+                count = assert_non_negative_int_field(self, record, count_name)
+                if count:
+                    saw_populated_above_bar = True
+                    self.assertGreater(length, 0)
+
+        if not saw_above_bar_fields:
+            self.skipTest(
+                "dataset sample did not include SMF type 42 above-bar triplet fields"
+            )
+        if not saw_populated_above_bar:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 42 above-bar "
+                "triplets"
+            )
+
+    def test_real_type85_extended_triplets_are_consistent_when_present(self) -> None:
+        type85_records = self.records_of_type(85)
+        if not type85_records:
+            self.skipTest("dataset sample did not include parsed SMF type 85 records")
+
+        saw_extended_triplets = False
+        saw_populated_extended_triplets = False
+        for record in type85_records:
+            if "smf85osn" not in record.fields:
+                continue
+            saw_extended_triplets = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                offset = assert_non_negative_int_field(self, record, "smf85oso")
+                length = assert_non_negative_int_field(self, record, "smf85osl")
+                count = assert_non_negative_int_field(self, record, "smf85osn")
+                if count:
+                    saw_populated_extended_triplets = True
+                    self.assertGreater(offset, 0)
+                    self.assertGreater(length, 0)
+                    self.assertTrue(record.extended_sections)
+
+        if not saw_extended_triplets:
+            self.skipTest(
+                "dataset sample did not include SMF type 85 extended triplet fields"
+            )
+        if not saw_populated_extended_triplets:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 85 extended "
+                "triplets"
+            )
+
+    def test_real_type113_sds_triplets_are_consistent_when_present(self) -> None:
+        type113_records = self.records_of_type(113)
+        if not type113_records:
+            self.skipTest("dataset sample did not include parsed SMF type 113 records")
+
+        saw_sds_fields = False
+        saw_populated_sds = False
+        for record in type113_records:
+            if "smf113son" not in record.fields:
+                continue
+            saw_sds_fields = True
+            with self.subTest(offset=record.offset, subtype=record.subtype):
+                for field_name in (
+                    "smf113sof",
+                    "smf113sln",
+                    "smf113son",
+                    "smf113iof",
+                    "smf113iln",
+                    "smf113ion",
+                    "smf113dof",
+                    "smf113dln",
+                    "smf113don",
+                ):
+                    assert_non_negative_int_field(self, record, field_name)
+                if "smf113sdl" in record.fields:
+                    assert_non_negative_int_field(self, record, "smf113sdl")
+                if record.fields["smf113son"]:
+                    saw_populated_sds = True
+                    self.assertTrue(record.sections)
+
+        if not saw_sds_fields:
+            self.skipTest("dataset sample did not include SMF type 113 SDS fields")
+        if not saw_populated_sds:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 113 SDS triplets"
+            )
+
+    def test_real_type124_subtype_triplets_are_consistent_when_present(self) -> None:
+        type124_records = self.records_of_type(124)
+        if not type124_records:
+            self.skipTest("dataset sample did not include parsed SMF type 124 records")
+
+        subtype_triplets = {
+            1: ("smf124s1_port_offset", "smf124s1_port_len", "smf124s1_port_num"),
+            2: (
+                "smf124s2_epsecstat_offset",
+                "smf124s2_epsecstat_len",
+                "smf124s2_epsecstat_num",
+            ),
+            3: (
+                "smf124s3_authkeyupd_offset",
+                "smf124s3_authkeyupd_len",
+                "smf124s3_authkeyupd_num",
+            ),
+            4: (
+                "smf124s4_encrkeyupd_offset",
+                "smf124s4_encrkeyupd_len",
+                "smf124s4_encrkeyupd_num",
+            ),
+            5: (
+                "smf124s5_extkeymgrinfo_offset",
+                "smf124s5_extkeymgrinfo_len",
+                "smf124s5_extkeymgrinfo_num",
+            ),
+        }
+        saw_subtype_triplets = False
+        saw_populated_subtype_triplets = False
+
+        for record in type124_records:
+            self.assertIn("smf124sty", record.fields)
+            subtype = record.subtype
+            if subtype not in subtype_triplets:
+                continue
+            offset_name, length_name, count_name = subtype_triplets[subtype]
+            if count_name not in record.fields:
+                continue
+            saw_subtype_triplets = True
+            with self.subTest(offset=record.offset, subtype=subtype):
+                offset = assert_non_negative_int_field(self, record, offset_name)
+                length = assert_non_negative_int_field(self, record, length_name)
+                count = assert_non_negative_int_field(self, record, count_name)
+                if count:
+                    saw_populated_subtype_triplets = True
+                    self.assertGreater(offset, 0)
+                    self.assertGreater(length, 0)
+                    self.assertTrue(record.sections)
+
+        if not saw_subtype_triplets:
+            self.skipTest(
+                "dataset sample did not include SMF type 124 subtype triplet fields"
+            )
+        if not saw_populated_subtype_triplets:
+            self.skipTest(
+                "dataset sample did not include populated SMF type 124 subtype "
+                "triplets"
+            )
+
     def test_real_type98_records_have_sds_header_fields(self) -> None:
         type98_records = self.records_of_type(98)
         if not type98_records:
