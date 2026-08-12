@@ -2472,16 +2472,24 @@ def _racf_type83_subtype1_parser_lines(
         if typed_action.subtype_secondary_offset is not None
         else 22
     )
+    subtype_flag_offset = 4
+    subtype_flag_size = 1
     if fields_by_name is not None:
         subtype_anchor_field = fields_by_name.get("smf83df1")
         if subtype_anchor_field is not None:
             subtype_primary_offset = int(cast(int, subtype_anchor_field["offset"]))
             subtype_secondary_offset = subtype_primary_offset + 4
+        subtype_flag_field = fields_by_name.get("smf83flg")
+        if subtype_flag_field is not None:
+            subtype_flag_offset = int(cast(int, subtype_flag_field["offset"]))
+            subtype_flag_size = int(cast(int, subtype_flag_field["size"]))
     variable_section_layout = _variable_section_layout(
         section_structs.get(typed_action.variable_section_struct, ())
     )
     lines = [
         "    if (view->len >= 48 &&",
+        "        (read_unsigned_be(data + "
+        f"{subtype_flag_offset}, {subtype_flag_size}) & 0x40) != 0 &&",
         "        ((!is_packed_smf_date(data + 10) &&",
         "        is_packed_smf_date(data + 6) &&",
         "        read_unsigned_be(data + "
