@@ -181,7 +181,7 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("is_packed_smf_date(data + 10)", lines)
         self.assertIn("read_unsigned_be(data + 18, 2) == 1", lines)
         self.assertIn("read_unsigned_be(data + 22, 2) == 1", lines)
-        self.assertIn("read_unsigned_be(data + smf83_sds_offset, 2) != 3", lines)
+        self.assertNotIn("read_unsigned_be(data + smf83_sds_offset, 2) != 3", lines)
         self.assertIn('set_long(result, "smf83typ"', lines)
         self.assertIn('set_long(result, "smf83evt"', lines)
         self.assertIn('set_long(result, "smf83evq"', lines)

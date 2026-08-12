@@ -2501,10 +2501,6 @@ def _racf_type83_subtype1_parser_lines(
         f"{subtype_primary_offset} : "
         f"{subtype_secondary_offset};",
         "        smf83_sds_offset = smf83_subtype_offset + 2;",
-        "        if (read_unsigned_be(data + smf83_sds_offset, 2) != "
-        f"{typed_action.sds_type_value}) {{",
-        "            return result;",
-        "        }",
         "        if (smf83_subtype_offset == "
         f"{subtype_secondary_offset} &&",
         "            set_bytes(result, \"smf83ssi\", data + 18, 4) < 0) {",
