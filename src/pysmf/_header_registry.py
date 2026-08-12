@@ -2,77 +2,236 @@
 
 from __future__ import annotations
 
+from typing import Iterable
+
+
+def _target(
+    name: str,
+    record_types: Iterable[int],
+    *,
+    generic: bool,
+    alternate_names: tuple[str, ...] = (),
+) -> dict[str, object]:
+    target = {
+        "name": name,
+        "record_types": tuple(record_types),
+        "generic": generic,
+    }
+    if alternate_names:
+        target["alternate_names"] = alternate_names
+    return target
+
 # ``generic=True`` means the compiled header backs generic SMF record boundary
 # and common-header parsing. Type-specific wrappers can be added from the same
 # registry without changing the runtime discovery contract.
 HEADER_TARGETS = (
-    {"name": "ifasmfh.h", "record_types": (), "generic": True},
-    {"name": "ifasmfr.h", "record_types": tuple(range(7)), "generic": True},
-    {"name": "ifasmfr1.h", "record_types": tuple(range(7, 20)), "generic": False},
-    {"name": "ifasmfr2.h", "record_types": tuple(range(20, 28)), "generic": False},
-    {"name": "ifasmfr3.h", "record_types": tuple(range(28, 37)), "generic": False},
-    {"name": "ifasmfr4.h", "record_types": tuple(range(37, 47)), "generic": False},
-    {"name": "ifasmfr5.h", "record_types": tuple(range(47, 55)), "generic": False},
-    {"name": "ifasmfr9.h", "record_types": tuple(range(80, 85)), "generic": False},
-    {"name": "ifasmfra.h", "record_types": tuple(range(85, 104)), "generic": False},
-    {"name": "ifgsmf14.h", "record_types": (14,), "generic": False},
-    {"name": "iggsmf17.h", "record_types": (17,), "generic": False},
-    {"name": "iggsmf18.h", "record_types": (18,), "generic": False},
-    {"name": "iggsmf19.h", "record_types": (19,), "generic": False},
-    {"name": "igesmf21.h", "record_types": (21,), "generic": False},
-    {"name": "iosdsmfr.h", "record_types": (22,), "generic": False},
-    {"name": "iazsmf24.h", "record_types": (24,), "generic": False},
-    {"name": "iazsmf25.h", "record_types": (25,), "generic": False},
-    {"name": "iazsmf26.h", "record_types": (26,), "generic": False},
-    {"name": "itvsmf41.h", "record_types": (41,), "generic": False},
-    {"name": "igwsmf.h", "record_types": (42,), "generic": False},
-    {"name": "iazsmf43.h", "record_types": (43,), "generic": False},
-    {"name": "iazsmf45.h", "record_types": (45,), "generic": False},
-    {"name": "iazsmf47.h", "record_types": (47,), "generic": False},
-    {"name": "iazsmf48.h", "record_types": (48,), "generic": False},
-    {"name": "iazsmf49.h", "record_types": (49,), "generic": False},
-    {"name": "iazsmf52.h", "record_types": (52,), "generic": False},
-    {"name": "iazsmf53.h", "record_types": (53,), "generic": False},
-    {"name": "iazsmf54.h", "record_types": (54,), "generic": False},
-    {"name": "iazsmf55.h", "record_types": (55,), "generic": False},
-    {"name": "iazsmf56.h", "record_types": (56,), "generic": False},
-    {"name": "iazsmf57.h", "record_types": (57,), "generic": False},
-    {"name": "iazsmf58.h", "record_types": (58,), "generic": False},
-    {"name": "idasmf62.h", "record_types": (60, 61, 62), "generic": False},
-    {"name": "idasmf64.h", "record_types": (64,), "generic": False},
-    {"name": "iazsmf84.h", "record_types": (84,), "generic": False},
-    {"name": "cbrsmf.h", "record_types": (85,), "generic": False},
-    {"name": "isgysmfr.h", "record_types": (87,), "generic": False},
-    {"name": "ixgsmf88.h", "record_types": (88,), "generic": False},
-    {"name": "ifbsmf90.h", "record_types": (90,), "generic": False},
-    {"name": "cnzmysmf.h", "record_types": (90,), "generic": False},
-    {"name": "cnzmysm2.h", "record_types": (90,), "generic": False},
-    {"name": "csvdlsmf.h", "record_types": (90,), "generic": False},
-    {"name": "csvapsmf.h", "record_types": (90,), "generic": False},
-    {"name": "csvlpsmf.h", "record_types": (90,), "generic": False},
-    {"name": "ihavbsmf.h", "record_types": (90,), "generic": False},
-    {"name": "ixcysm90.h", "record_types": (90,), "generic": False},
-    {
-        "name": "iefopsmf.h",
-        "record_types": (90,),
-        "generic": False,
-        "alternate_names": ("IEFOPSMF",),
-    },
-    {"name": "bpxysmfr.h", "record_types": (92,), "generic": False},
-    {"name": "iecsmf94.h", "record_types": (94,), "generic": False},
-    {"name": "iwmsmf90.h", "record_types": (97,), "generic": False},
-    {"name": "iwmsmf97.h", "record_types": (97,), "generic": False},
-    {"name": "ihahr098.h", "record_types": (98,), "generic": False},
-    {"name": "hwismf6a.h", "record_types": (106,), "generic": False},
-    {"name": "hisysmfr.h", "record_types": (113,), "generic": False},
-    {"name": "ezasmf.h", "record_types": (119,), "generic": False},
-    {"name": "iosds124.h", "record_types": (124,), "generic": False},
-    {"name": "gtzzsmf1.h", "record_types": (125,), "generic": False},
-    {"name": "ifasmfcn.h", "record_types": (30, 1154), "generic": False},
-    {"name": "iazs1153.h", "record_types": (1153,), "generic": False},
-    {"name": "ifar1154.h", "record_types": (1154,), "generic": False},
-    {"name": "iazs1154.h", "record_types": (1154,), "generic": False},
-    {"name": "csvs1156.h", "record_types": (1156,), "generic": False},
-    {"name": "iosds983.h", "record_types": (983,), "generic": False},
-    {"name": "iosds984.h", "record_types": (984,), "generic": False},
+    _target("ifasmfh.h", (), generic=True),
+    _target("ifasmfr.h", range(7), generic=True),
+    *(
+        _target(name, range(start, stop), generic=False)
+        for name, start, stop in (
+            ("ifasmfr1.h", 7, 20),
+            ("ifasmfr2.h", 20, 28),
+            ("ifasmfr3.h", 28, 37),
+            ("ifasmfr4.h", 37, 47),
+            ("ifasmfr5.h", 47, 55),
+            ("ifasmfr9.h", 80, 85),
+            ("ifasmfra.h", 85, 104),
+        )
+    ),
+    *(
+        _target(name, record_types, generic=False)
+        for name, record_types in (
+            ("ifgsmf14.h", (14,)),
+            ("iggsmf17.h", (17,)),
+            ("iggsmf18.h", (18,)),
+            ("iggsmf19.h", (19,)),
+            ("igesmf21.h", (21,)),
+            ("iosdsmfr.h", (22,)),
+            ("iazsmf24.h", (24,)),
+            ("iazsmf25.h", (25,)),
+            ("iazsmf26.h", (26,)),
+            ("itvsmf41.h", (41,)),
+            ("igwsmf.h", (42,)),
+            ("iazsmf43.h", (43,)),
+            ("iazsmf45.h", (45,)),
+            ("iazsmf47.h", (47,)),
+            ("iazsmf48.h", (48,)),
+            ("iazsmf49.h", (49,)),
+            ("iazsmf52.h", (52,)),
+            ("iazsmf53.h", (53,)),
+            ("iazsmf54.h", (54,)),
+            ("iazsmf55.h", (55,)),
+            ("iazsmf56.h", (56,)),
+            ("iazsmf57.h", (57,)),
+            ("iazsmf58.h", (58,)),
+            ("idasmf62.h", (60, 61, 62)),
+            ("idasmf64.h", (64,)),
+            ("iazsmf84.h", (84,)),
+            ("cbrsmf.h", (85,)),
+            ("isgysmfr.h", (87,)),
+            ("ixgsmf88.h", (88,)),
+        )
+    ),
+    *(
+        _target(name, (90,), generic=False)
+        for name in (
+            "ifbsmf90.h",
+            "cnzmysmf.h",
+            "cnzmysm2.h",
+            "csvdlsmf.h",
+            "csvapsmf.h",
+            "csvlpsmf.h",
+            "ihavbsmf.h",
+            "ixcysm90.h",
+        )
+    ),
+    _target(
+        "iefopsmf.h",
+        (90,),
+        generic=False,
+        alternate_names=("IEFOPSMF",),
+    ),
+    *(
+        _target(name, record_types, generic=False)
+        for name, record_types in (
+            ("bpxysmfr.h", (92,)),
+            ("iecsmf94.h", (94,)),
+            ("iwmsmf90.h", (97,)),
+            ("iwmsmf97.h", (97,)),
+            ("ihahr098.h", (98,)),
+            ("hwismf6a.h", (106,)),
+            ("hisysmfr.h", (113,)),
+            ("ezasmf.h", (119,)),
+            ("iosds124.h", (124,)),
+            ("gtzzsmf1.h", (125,)),
+            ("ifasmfcn.h", (30, 1154)),
+            ("iazs1153.h", (1153,)),
+            ("ifar1154.h", (1154,)),
+            ("iazs1154.h", (1154,)),
+            ("csvs1156.h", (1156,)),
+            ("iosds983.h", (983,)),
+            ("iosds984.h", (984,)),
+        )
+    ),
+)
+
+# Extra record-specific parser metadata consumed by tools/smf_build.py.
+# Only keep explicit names that cannot be inferred from action payload fields.
+_EXPLICIT_SPECIAL_RECORD_STRUCT_NAMES: dict[int, tuple[str, ...]] = {}
+
+SPECIAL_RECORD_ACTIONS = {
+    80: (
+        {
+            "kind": "compact_section_directory_fallback",
+            "key": "relocate_sections",
+            "anchor_field": "smf80des",
+            "relocate_field": "smf80evq",
+            "relocate_shift": 1,
+            "count_delta": 2,
+        },
+    ),
+    83: (
+        {
+            "kind": "racf83_subtype1_security",
+            "security_struct": "smf83ds1",
+            "variable_section_struct": "smf83var",
+            "subtype_primary_offset": 18,
+            "subtype_secondary_offset": 22,
+            "subtype_value": 1,
+            "sds_type_value": 3,
+            "security_minimum_length": 96,
+            "header_integer_fields": (
+                ("smf83typ", "read_unsigned_be(data + smf83_subtype_offset, 2)"),
+                ("smf83trp", "read_unsigned_be(data + smf83_sds_offset, 2)"),
+                ("smf83opd", "read_unsigned_be(data + smf83_sds_offset + 4, 4)"),
+                ("smf83lpd", "read_unsigned_be(data + smf83_sds_offset + 8, 2)"),
+                ("smf83npd", "read_unsigned_be(data + smf83_sds_offset + 10, 2)"),
+                ("smf83od1", "read_unsigned_be(data + smf83_sds_offset + 12, 4)"),
+                ("smf83ld1", "read_unsigned_be(data + smf83_sds_offset + 16, 2)"),
+                ("smf83nd1", "read_unsigned_be(data + smf83_sds_offset + 18, 2)"),
+                ("smf83od2", "read_unsigned_be(data + smf83_sds_offset + 20, 4)"),
+                ("smf83ld2", "read_unsigned_be(data + smf83_sds_offset + 24, 2)"),
+                ("smf83nd2", "read_unsigned_be(data + smf83_sds_offset + 26, 2)"),
+            ),
+        },
+    ),
+    98: (
+        {
+            "kind": "long_triplet_directory",
+            "key": "relocate_sections",
+            "directory": "fixed_end",
+            "count_field": "smf98sdstripletsnum",
+        },
+    ),
+    119: (
+        {
+            "kind": "smf119_ident_overlay",
+            "triplet_struct": "SMF119SDefSect",
+            "ident_struct": "SMF119Ident",
+            "triplet_count_field": "SMF119SD_TRN",
+            "ident_offset_field": "SMF119IDOff",
+            "ident_length_field": "SMF119IDLen",
+            "ident_count_field": "SMF119IDNum",
+            "triplet_directory_offset": 28,
+            "triplet_max_count": 29,
+            "directory_key": "relocate_sections",
+            "skip_ident_fields": ("SMF119TI_rsvd1", "SMF119TI_rsvd2"),
+        },
+    ),
+    1154: (
+        {
+            "kind": "smf1154_common_overlay",
+            "ctrp_struct": "smf1154_ctrp",
+            "common_struct": "smf1154_c_hdr",
+            "required_ctrp_names": (
+                "smf1154_ctrp_trn",
+                "smf1154_c_offset",
+                "smf1154_c_length",
+                "smf1154_c_number",
+                "smf1154_subspec_offset",
+                "smf1154_subspec_length",
+                "smf1154_subspec_number",
+            ),
+            "ctrp_anchor_offset": 24,
+            "ctrp_anchor_length": 2,
+            "common_directory_key": "relocate_sections",
+            "common_directory_count_expression": "2",
+            "subspec_directory_key": "extended_relocate_sections",
+            "subspec_directory_offset_delta": 4,
+        },
+    ),
+}
+
+
+def _derive_special_record_struct_names(
+    explicit_names: dict[int, tuple[str, ...]],
+    actions: dict[int, tuple[dict[str, object], ...]],
+) -> dict[int, tuple[str, ...]]:
+    derived: dict[int, set[str]] = {
+        record_type: set(names) for record_type, names in explicit_names.items()
+    }
+    for record_type, action_specs in actions.items():
+        names = derived.setdefault(record_type, set())
+        for action_spec in action_specs:
+            for key in (
+                "security_struct",
+                "ctrp_struct",
+                "common_struct",
+                "triplet_struct",
+                "ident_struct",
+            ):
+                value = action_spec.get(key)
+                if isinstance(value, str) and value:
+                    names.add(value)
+    return {
+        record_type: tuple(sorted(names))
+        for record_type, names in derived.items()
+        if names
+    }
+
+
+SPECIAL_RECORD_STRUCT_NAMES = _derive_special_record_struct_names(
+    _EXPLICIT_SPECIAL_RECORD_STRUCT_NAMES,
+    SPECIAL_RECORD_ACTIONS,
 )

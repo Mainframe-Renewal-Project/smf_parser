@@ -132,7 +132,12 @@ class SetupGenerationTests(unittest.TestCase):
         }
 
         lines = "\n".join(
-            module._compact_racf_type80_section_parser_lines(80, fields_by_name)
+            module._special_record_action_lines(
+                80,
+                (),
+                fields_by_name,
+                minimum_size=0,
+            )
         )
 
         self.assertIn('PyDict_GetItemString(result, "relocate_sections")', lines)
@@ -141,7 +146,13 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn("18 + read_unsigned_be(\n                data + 22, 2)", lines)
 
         self.assertEqual(
-            module._compact_racf_type80_section_parser_lines(81, fields_by_name), []
+            module._special_record_action_lines(
+                81,
+                (),
+                fields_by_name,
+                minimum_size=0,
+            ),
+            [],
         )
 
     def test_racf_type83_subtype1_security_fields_are_generated(self) -> None:
@@ -266,15 +277,32 @@ class SetupGenerationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         structs = module._header_structs(header)
         fields = module._record_struct_fields(structs["smfr98"])
+        fields_by_name = {field["name"]: field for field in fields}
+        minimum_size = max(field["offset"] + field["size"] for field in fields)
 
-        lines = "\n".join(module._smf98_sds_parser_lines(98, fields))
+        lines = "\n".join(
+            module._special_record_action_lines(
+                98,
+                fields,
+                fields_by_name,
+                minimum_size=minimum_size,
+            )
+        )
 
         self.assertIn("append_self_defining_long_triplet_directory", lines)
         self.assertIn('result, "relocate_sections", data, view->len', lines)
         self.assertIn("48,", lines)
         self.assertIn("read_unsigned_be(data + 28, 2)", lines)
 
-        self.assertEqual(module._smf98_sds_parser_lines(90, fields), [])
+        self.assertEqual(
+            module._special_record_action_lines(
+                90,
+                fields,
+                fields_by_name,
+                minimum_size=minimum_size,
+            ),
+            [],
+        )
 
     def test_smf1154_common_directory_is_generated(self) -> None:
         module = setup_module()

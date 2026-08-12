@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import lru_cache
 import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from setuptools import Extension
 from setuptools._distutils.ccompiler import CompileError, new_compiler
@@ -17,34 +19,286 @@ from setuptools.command.build_py import build_py as build_py_base
 from wheel.bdist_wheel import bdist_wheel as bdist_wheel_base
 
 DEFAULT_INCLUDE_DIR = Path("/usr/include/zos")
-DEFAULT_IBM_INCLUDE_DIR = Path("/usr/include/IBM")
 ROOT = Path(__file__).parents[1]
 HEADER_COMPILE_FLAGS = ("-Wno-trigraphs",)
-SPECIAL_RECORD_STRUCT_NAMES: dict[int, tuple[str, ...]] = {
-    83: ("smf83ds1",),
-    119: ("SMF119SDefSect", "SMF119Ident"),
-    1154: ("smf1154_ctrp", "smf1154_c_hdr"),
-}
-SPECIAL_RECORD_ACTIONS: dict[int, tuple[dict[str, str], ...]] = {
-    80: (
-        {
-            "kind": "compact_section_directory_fallback",
-            "key": "relocate_sections",
-            "anchor_field": "smf80des",
-            "relocate_field": "smf80evq",
-            "relocate_shift": "1",
-            "count_delta": "2",
-        },
-    ),
-    98: (
-        {
-            "kind": "long_triplet_directory",
-            "key": "relocate_sections",
-            "directory": "fixed_end",
-            "count_field": "smf98sdstripletsnum",
-        },
-    ),
-}
+
+
+@dataclass(frozen=True)
+class LongTripletDirectoryAction:
+    kind: Literal["long_triplet_directory"]
+    key: str
+    directory: Literal["fixed_end"]
+    count_field: str
+
+
+@dataclass(frozen=True)
+class CompactSectionDirectoryFallbackAction:
+    kind: Literal["compact_section_directory_fallback"]
+    key: str
+    anchor_field: str
+    relocate_field: str
+    relocate_shift: int
+    count_delta: int
+
+
+@dataclass(frozen=True)
+class Smf1154CommonOverlayAction:
+    kind: Literal["smf1154_common_overlay"]
+    ctrp_struct: str
+    common_struct: str
+    required_ctrp_names: tuple[str, ...]
+    ctrp_anchor_offset: int
+    ctrp_anchor_length: int
+    common_directory_key: str
+    common_directory_count_expression: str
+    subspec_directory_key: str
+    subspec_directory_offset_delta: int
+
+
+@dataclass(frozen=True)
+class Racf83Subtype1SecurityAction:
+    kind: Literal["racf83_subtype1_security"]
+    security_struct: str
+    variable_section_struct: str
+    subtype_primary_offset: int
+    subtype_secondary_offset: int
+    subtype_value: int
+    sds_type_value: int
+    security_minimum_length: int
+    header_integer_fields: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class Smf119IdentOverlayAction:
+    kind: Literal["smf119_ident_overlay"]
+    triplet_struct: str
+    ident_struct: str
+    triplet_count_field: str
+    ident_offset_field: str
+    ident_length_field: str
+    ident_count_field: str
+    triplet_directory_offset: int
+    triplet_max_count: int
+    directory_key: str
+    skip_ident_fields: tuple[str, ...]
+
+
+SpecialRecordAction = (
+    LongTripletDirectoryAction
+    | CompactSectionDirectoryFallbackAction
+    | Smf1154CommonOverlayAction
+    | Racf83Subtype1SecurityAction
+    | Smf119IdentOverlayAction
+)
+
+
+def _validate_special_record_actions(
+    actions: dict[int, tuple[SpecialRecordAction, ...]],
+) -> dict[int, tuple[SpecialRecordAction, ...]]:
+    for record_type, record_actions in actions.items():
+        if record_type <= 0:
+            raise RuntimeError(
+                f"special record action type must be positive: {record_type}"
+            )
+        if not record_actions:
+            raise RuntimeError(
+                f"special record type {record_type} has an empty action list"
+            )
+        for action in record_actions:
+            if isinstance(action, LongTripletDirectoryAction):
+                if not action.count_field:
+                    raise RuntimeError(
+                        f"special record type {record_type} has empty count field"
+                    )
+                continue
+            if isinstance(action, CompactSectionDirectoryFallbackAction):
+                if not action.anchor_field or not action.relocate_field:
+                    raise RuntimeError(
+                        f"special record type {record_type} has missing compact fields"
+                    )
+                continue
+            if isinstance(action, Smf1154CommonOverlayAction):
+                if record_type != 1154:
+                    raise RuntimeError(
+                        "smf1154_common_overlay action can only be registered "
+                        f"for type 1154, found {record_type}"
+                    )
+                continue
+            if isinstance(action, Racf83Subtype1SecurityAction):
+                if record_type != 83:
+                    raise RuntimeError(
+                        "racf83_subtype1_security action can only be registered "
+                        f"for type 83, found {record_type}"
+                    )
+                continue
+            if isinstance(action, Smf119IdentOverlayAction):
+                if record_type != 119:
+                    raise RuntimeError(
+                        "smf119_ident_overlay action can only be registered "
+                        f"for type 119, found {record_type}"
+                    )
+                continue
+            raise RuntimeError(
+                f"unsupported special action class for type {record_type}: "
+                f"{type(action).__name__}"
+            )
+    return actions
+
+
+def _build_special_record_actions(
+    action_specs: dict[int, tuple[dict[str, object], ...]],
+) -> dict[int, tuple[SpecialRecordAction, ...]]:
+    actions: dict[int, tuple[SpecialRecordAction, ...]] = {}
+    for record_type, record_specs in action_specs.items():
+        typed_actions: list[SpecialRecordAction] = []
+        for spec in record_specs:
+            kind = str(spec.get("kind", ""))
+            if kind == "long_triplet_directory":
+                typed_actions.append(
+                    LongTripletDirectoryAction(
+                        kind="long_triplet_directory",
+                        key=str(spec["key"]),
+                        directory=cast(Literal["fixed_end"], str(spec["directory"])),
+                        count_field=str(spec["count_field"]),
+                    )
+                )
+                continue
+            if kind == "compact_section_directory_fallback":
+                typed_actions.append(
+                    CompactSectionDirectoryFallbackAction(
+                        kind="compact_section_directory_fallback",
+                        key=str(spec["key"]),
+                        anchor_field=str(spec["anchor_field"]),
+                        relocate_field=str(spec["relocate_field"]),
+                        relocate_shift=int(cast(int, spec["relocate_shift"])),
+                        count_delta=int(cast(int, spec["count_delta"])),
+                    )
+                )
+                continue
+            if kind == "smf1154_common_overlay":
+                typed_actions.append(
+                    Smf1154CommonOverlayAction(
+                        kind="smf1154_common_overlay",
+                        ctrp_struct=str(spec["ctrp_struct"]),
+                        common_struct=str(spec["common_struct"]),
+                        required_ctrp_names=tuple(
+                            str(name)
+                            for name in cast(
+                                tuple[object, ...],
+                                spec["required_ctrp_names"],
+                            )
+                        ),
+                        ctrp_anchor_offset=int(cast(int, spec["ctrp_anchor_offset"])),
+                        ctrp_anchor_length=int(cast(int, spec["ctrp_anchor_length"])),
+                        common_directory_key=str(spec["common_directory_key"]),
+                        common_directory_count_expression=str(
+                            spec["common_directory_count_expression"]
+                        ),
+                        subspec_directory_key=str(spec["subspec_directory_key"]),
+                        subspec_directory_offset_delta=int(
+                            cast(int, spec["subspec_directory_offset_delta"])
+                        ),
+                    )
+                )
+                continue
+            if kind == "racf83_subtype1_security":
+                typed_actions.append(
+                    Racf83Subtype1SecurityAction(
+                        kind="racf83_subtype1_security",
+                        security_struct=str(spec["security_struct"]),
+                        variable_section_struct=str(spec["variable_section_struct"]),
+                        subtype_primary_offset=int(
+                            cast(int, spec["subtype_primary_offset"])
+                        ),
+                        subtype_secondary_offset=int(
+                            cast(int, spec["subtype_secondary_offset"])
+                        ),
+                        subtype_value=int(cast(int, spec["subtype_value"])),
+                        sds_type_value=int(cast(int, spec["sds_type_value"])),
+                        security_minimum_length=int(
+                            cast(int, spec["security_minimum_length"])
+                        ),
+                        header_integer_fields=tuple(
+                            (str(name), str(expression))
+                            for name, expression in cast(
+                                tuple[tuple[object, object], ...],
+                                spec["header_integer_fields"],
+                            )
+                        ),
+                    )
+                )
+                continue
+            if kind == "smf119_ident_overlay":
+                typed_actions.append(
+                    Smf119IdentOverlayAction(
+                        kind="smf119_ident_overlay",
+                        triplet_struct=str(spec["triplet_struct"]),
+                        ident_struct=str(spec["ident_struct"]),
+                        triplet_count_field=str(spec["triplet_count_field"]),
+                        ident_offset_field=str(spec["ident_offset_field"]),
+                        ident_length_field=str(spec["ident_length_field"]),
+                        ident_count_field=str(spec["ident_count_field"]),
+                        triplet_directory_offset=int(
+                            cast(int, spec["triplet_directory_offset"])
+                        ),
+                        triplet_max_count=int(cast(int, spec["triplet_max_count"])),
+                        directory_key=str(spec["directory_key"]),
+                        skip_ident_fields=tuple(
+                            str(name)
+                            for name in cast(
+                                tuple[object, ...], spec["skip_ident_fields"]
+                            )
+                        ),
+                    )
+                )
+                continue
+            raise RuntimeError(f"unsupported special record action kind: {kind!r}")
+        actions[int(record_type)] = tuple(typed_actions)
+    return actions
+
+
+@lru_cache(maxsize=1)
+def _header_registry_module() -> Any:
+    registry_path = ROOT / "src" / "pysmf" / "_header_registry.py"
+    spec = spec_from_file_location("_pysmf_header_registry", registry_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load header registry from {registry_path}")
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _special_record_struct_names() -> dict[int, tuple[str, ...]]:
+    module = _header_registry_module()
+    raw_names = getattr(module, "SPECIAL_RECORD_STRUCT_NAMES", {})
+    names: dict[int, tuple[str, ...]] = {}
+    for record_type, struct_names in cast(dict[object, object], raw_names).items():
+        typed_record_type = int(cast(int | str, record_type))
+        names[typed_record_type] = tuple(
+            str(name) for name in cast(tuple[object, ...], struct_names)
+        )
+    return names
+
+
+def _special_record_action_specs() -> dict[int, tuple[dict[str, object], ...]]:
+    module = _header_registry_module()
+    raw_actions = getattr(module, "SPECIAL_RECORD_ACTIONS", {})
+    specs: dict[int, tuple[dict[str, object], ...]] = {}
+    for record_type, action_specs in cast(dict[object, object], raw_actions).items():
+        typed_record_type = int(cast(int | str, record_type))
+        specs[typed_record_type] = tuple(
+            cast(dict[str, object], action)
+            for action in cast(tuple[object, ...], action_specs)
+        )
+    return specs
+
+
+SPECIAL_RECORD_STRUCT_NAMES: dict[int, tuple[str, ...]] = _special_record_struct_names()
+SPECIAL_RECORD_ACTIONS: dict[int, tuple[SpecialRecordAction, ...]] = (
+    _validate_special_record_actions(
+        _build_special_record_actions(_special_record_action_specs())
+    )
+)
 FIELD_RE = re.compile(
     r"^\s*(?P<type>unsigned\s+char|char|unsigned\s+short|short|"
     r"unsigned\s+int|int|unsigned\s+long\s+long|long\s+long|"
@@ -202,12 +456,7 @@ def _header_name_candidates(target: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _header_targets() -> tuple[dict[str, Any], ...]:
-    registry_path = ROOT / "src" / "pysmf" / "_header_registry.py"
-    spec = spec_from_file_location("_pysmf_header_registry", registry_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load header registry from {registry_path}")
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _header_registry_module()
     return tuple(module.HEADER_TARGETS)
 
 
@@ -635,19 +884,20 @@ def _smf119_parser_lines(
     fields_by_name: dict[str, dict[str, object]],
     special_structs: dict[str, tuple[dict[str, object], ...]],
 ) -> list[str]:
-    if record_type != 119:
+    action = _special_record_action(record_type, "smf119_ident_overlay")
+    if not isinstance(action, Smf119IdentOverlayAction):
         return []
-    triplet_fields = special_structs.get("SMF119SDefSect")
-    ident_fields = special_structs.get("SMF119Ident")
+    triplet_fields = special_structs.get(action.triplet_struct)
+    ident_fields = special_structs.get(action.ident_struct)
     if not triplet_fields or not ident_fields:
         return []
     triplet_field_map = _field_map(triplet_fields)
-    triplet_count_field = fields_by_name.get("SMF119SD_TRN")
+    triplet_count_field = fields_by_name.get(action.triplet_count_field)
     if triplet_count_field is None:
-        triplet_count_field = triplet_field_map.get("SMF119SD_TRN")
-    ident_offset_field = triplet_field_map.get("SMF119IDOff")
-    ident_length_field = triplet_field_map.get("SMF119IDLen")
-    ident_count_field = triplet_field_map.get("SMF119IDNum")
+        triplet_count_field = triplet_field_map.get(action.triplet_count_field)
+    ident_offset_field = triplet_field_map.get(action.ident_offset_field)
+    ident_length_field = triplet_field_map.get(action.ident_length_field)
+    ident_count_field = triplet_field_map.get(action.ident_count_field)
     if (
         triplet_count_field is None
         or ident_offset_field is None
@@ -668,8 +918,10 @@ def _smf119_parser_lines(
         f"    if (view->len >= (Py_ssize_t){minimum_triplet_bytes}) {{",
         "        unsigned long long smf119_triplet_count = "
         f"{_field_read_expression(triplet_count_field, base_expression='data')};",
-        "        if (smf119_triplet_count > 0 && smf119_triplet_count <= 29 && ",
-        "            view->len >= (Py_ssize_t)(28 + (smf119_triplet_count * 8))) {",
+        "        if (smf119_triplet_count > 0 && smf119_triplet_count <= "
+        f"{action.triplet_max_count} && ",
+        "            view->len >= (Py_ssize_t)("
+        f"{action.triplet_directory_offset} + (smf119_triplet_count * 8))) {{",
         "            unsigned long long smf119_ident_offset = "
         f"{_field_read_expression(ident_offset_field, base_expression='data')};",
         "            unsigned long long smf119_ident_length = "
@@ -688,8 +940,8 @@ def _smf119_parser_lines(
     lines.extend(
         _append_long_triplet_directory_lines(
             indent="            ",
-            key="relocate_sections",
-            directory_expression="28",
+            key=action.directory_key,
+            directory_expression=str(action.triplet_directory_offset),
             count_expression="smf119_triplet_count",
             inline_directory=True,
         )
@@ -713,7 +965,7 @@ def _smf119_parser_lines(
             base_expression="smf119_ident",
             indent="                ",
             available_expression="smf119_ident_available",
-            skip_names=("SMF119TI_rsvd1", "SMF119TI_rsvd2"),
+            skip_names=action.skip_ident_fields,
         )
     )
     lines.extend(
@@ -730,23 +982,15 @@ def _smf1154_common_parser_lines(
     record_type: int,
     special_structs: dict[str, tuple[dict[str, object], ...]],
 ) -> list[str]:
-    if record_type != 1154:
+    action = _special_record_action(record_type, "smf1154_common_overlay")
+    if not isinstance(action, Smf1154CommonOverlayAction):
         return []
-    ctrp_fields = special_structs.get("smf1154_ctrp")
-    common_fields = special_structs.get("smf1154_c_hdr")
+    ctrp_fields = special_structs.get(action.ctrp_struct)
+    common_fields = special_structs.get(action.common_struct)
     if not ctrp_fields or not common_fields:
         return []
     ctrp_field_map = _field_map(ctrp_fields)
-    required_ctrp_names = (
-        "smf1154_ctrp_trn",
-        "smf1154_c_offset",
-        "smf1154_c_length",
-        "smf1154_c_number",
-        "smf1154_subspec_offset",
-        "smf1154_subspec_length",
-        "smf1154_subspec_number",
-    )
-    if not all(name in ctrp_field_map for name in required_ctrp_names):
+    if not all(name in ctrp_field_map for name in action.required_ctrp_names):
         return []
     ctrp_length = _struct_size(ctrp_fields)
     common_length = _struct_size(common_fields)
@@ -770,7 +1014,9 @@ def _smf1154_common_parser_lines(
         "        unsigned long long smf1154_common_length;",
         "        unsigned long long smf1154_subspec_offset;",
         "        unsigned long long smf1154_subspec_count;",
-        "        smf1154_ctrp = 24 + read_unsigned_be(data + 24, 2);",
+        "        smf1154_ctrp = "
+        f"{action.ctrp_anchor_offset} + read_unsigned_be(data + "
+        f"{action.ctrp_anchor_offset}, {action.ctrp_anchor_length});",
         "        if (smf1154_ctrp + "
         f"{ctrp_length} <= (unsigned long long)view->len) {{",
         "            smf1154_common_offset = read_unsigned_be(",
@@ -830,9 +1076,9 @@ def _smf1154_common_parser_lines(
     lines.extend(
         _append_long_triplet_directory_lines(
             indent="            ",
-            key="relocate_sections",
+            key=action.common_directory_key,
             directory_expression=f"smf1154_ctrp + {ctrp_directory_offset}",
-            count_expression="2",
+            count_expression=action.common_directory_count_expression,
         )
     )
     lines.extend(
@@ -867,8 +1113,10 @@ def _smf1154_common_parser_lines(
     lines.extend(
         _append_long_triplet_directory_lines(
             indent="                ",
-            key="extended_relocate_sections",
-            directory_expression="smf1154_subspec_offset + 4",
+            key=action.subspec_directory_key,
+            directory_expression=(
+                f"smf1154_subspec_offset + {action.subspec_directory_offset_delta}"
+            ),
             count_expression="smf1154_subspec_count",
         )
     )
@@ -891,12 +1139,11 @@ def _special_record_action_lines(
 ) -> list[str]:
     lines: list[str] = []
     for action in SPECIAL_RECORD_ACTIONS.get(record_type, ()):
-        kind = action.get("kind")
-        if kind == "long_triplet_directory":
-            count_field = fields_by_name.get(str(action.get("count_field", "")))
+        if isinstance(action, LongTripletDirectoryAction):
+            count_field = fields_by_name.get(action.count_field)
             if count_field is None:
                 continue
-            if action.get("directory") == "fixed_end":
+            if action.directory == "fixed_end":
                 directory_expression = str(minimum_size)
             else:
                 continue
@@ -906,7 +1153,7 @@ def _special_record_action_lines(
             )
             lines.extend(
                 _long_triplet_directory_action_lines(
-                    key=str(action.get("key", "relocate_sections")),
+                    key=action.key,
                     directory_expression=directory_expression,
                     count_expression=(
                         "read_unsigned_be("
@@ -916,18 +1163,18 @@ def _special_record_action_lines(
                 )
             )
             continue
-        if kind == "compact_section_directory_fallback":
-            anchor_field = fields_by_name.get(str(action.get("anchor_field", "")))
-            relocate_field = fields_by_name.get(str(action.get("relocate_field", "")))
+        if isinstance(action, CompactSectionDirectoryFallbackAction):
+            anchor_field = fields_by_name.get(action.anchor_field)
+            relocate_field = fields_by_name.get(action.relocate_field)
             if anchor_field is None or relocate_field is None:
                 continue
-            relocate_offset = int(cast(int, relocate_field["offset"])) + int(
-                action.get("relocate_shift", "0")
+            relocate_offset = int(cast(int, relocate_field["offset"])) + (
+                action.relocate_shift
             )
-            count_offset = relocate_offset + int(action.get("count_delta", "2"))
+            count_offset = relocate_offset + action.count_delta
             lines.extend(
                 _compact_section_directory_fallback_action_lines(
-                    key=str(action.get("key", "relocate_sections")),
+                    key=action.key,
                     anchor_expression=str(int(cast(int, anchor_field["offset"]))),
                     relocate_offset=relocate_offset,
                     count_offset=count_offset,
@@ -936,6 +1183,20 @@ def _special_record_action_lines(
             continue
         continue
     return lines
+
+
+def _special_record_action(
+    record_type: int,
+    kind: Literal[
+        "smf1154_common_overlay",
+        "racf83_subtype1_security",
+        "smf119_ident_overlay",
+    ],
+) -> SpecialRecordAction | None:
+    for action in SPECIAL_RECORD_ACTIONS.get(record_type, ()):
+        if action.kind == kind:
+            return action
+    return None
 
 
 def _long_triplet_directory_action_lines(
@@ -1007,22 +1268,6 @@ def _compact_section_directory_fallback_action_lines(
     ]
 
 
-def _smf98_sds_parser_lines(
-    record_type: int, fields: tuple[dict[str, object], ...]
-) -> list[str]:
-    fields_by_name = _field_map(fields)
-    minimum_size = max(
-        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
-        for field in fields
-    )
-    return _special_record_action_lines(
-        record_type,
-        fields,
-        fields_by_name,
-        minimum_size=minimum_size,
-    )
-
-
 def _record_adjacent_section_fields(
     record_type: int, structs: dict[str, str]
 ) -> tuple[dict[str, object], ...]:
@@ -1082,47 +1327,41 @@ def _racf_type83_subtype1_parser_lines(
     section_structs: dict[str, tuple[dict[str, object], ...]],
     special_structs: dict[str, tuple[dict[str, object], ...]],
 ) -> list[str]:
-    if record_type != 83:
+    action = _special_record_action(record_type, "racf83_subtype1_security")
+    if not isinstance(action, Racf83Subtype1SecurityAction):
         return []
-    security_fields = special_structs.get("smf83ds1")
+    security_fields = special_structs.get(action.security_struct)
     if not security_fields:
         return []
-    header_integer_fields = (
-        ("smf83typ", "read_unsigned_be(data + smf83_subtype_offset, 2)"),
-        ("smf83trp", "read_unsigned_be(data + smf83_sds_offset, 2)"),
-        ("smf83opd", "read_unsigned_be(data + smf83_sds_offset + 4, 4)"),
-        ("smf83lpd", "read_unsigned_be(data + smf83_sds_offset + 8, 2)"),
-        ("smf83npd", "read_unsigned_be(data + smf83_sds_offset + 10, 2)"),
-        ("smf83od1", "read_unsigned_be(data + smf83_sds_offset + 12, 4)"),
-        ("smf83ld1", "read_unsigned_be(data + smf83_sds_offset + 16, 2)"),
-        ("smf83nd1", "read_unsigned_be(data + smf83_sds_offset + 18, 2)"),
-        ("smf83od2", "read_unsigned_be(data + smf83_sds_offset + 20, 4)"),
-        ("smf83ld2", "read_unsigned_be(data + smf83_sds_offset + 24, 2)"),
-        ("smf83nd2", "read_unsigned_be(data + smf83_sds_offset + 26, 2)"),
-    )
+    header_integer_fields = action.header_integer_fields
     header_integer_field_map = dict(header_integer_fields)
     variable_section_layout = _variable_section_layout(
-        section_structs.get("smf83var", ())
+        section_structs.get(action.variable_section_struct, ())
     )
     lines = [
         "    if (view->len >= 48 &&",
         "        ((!is_packed_smf_date(data + 10) &&",
         "        is_packed_smf_date(data + 6) &&",
-        "        read_unsigned_be(data + 18, 2) == 1) ||",
+        "        read_unsigned_be(data + "
+        f"{action.subtype_primary_offset}, 2) == {action.subtype_value}) ||",
         "        ((is_packed_smf_date(data + 10) ||",
         "        !is_packed_smf_date(data + 6)) &&",
-        "        view->len >= 52 && read_unsigned_be(data + 22, 2) == 1))) {",
+        "        view->len >= 52 && read_unsigned_be(data + "
+        f"{action.subtype_secondary_offset}, 2) == {action.subtype_value}))) {{",
         "        unsigned long long smf83_subtype_offset;",
         "        unsigned long long smf83_sds_offset;",
         "        unsigned long long security_offset;",
         "        smf83_subtype_offset =",
         "            (!is_packed_smf_date(data + 10) &&",
-        "            is_packed_smf_date(data + 6)) ? 18 : 22;",
+        "            is_packed_smf_date(data + 6)) ? "
+        f"{action.subtype_primary_offset} : {action.subtype_secondary_offset};",
         "        smf83_sds_offset = smf83_subtype_offset + 2;",
-        "        if (read_unsigned_be(data + smf83_sds_offset, 2) != 3) {",
+        "        if (read_unsigned_be(data + smf83_sds_offset, 2) != "
+        f"{action.sds_type_value}) {{",
         "            return result;",
         "        }",
-        "        if (smf83_subtype_offset == 22 &&",
+        "        if (smf83_subtype_offset == "
+        f"{action.subtype_secondary_offset} &&",
         "            set_bytes(result, \"smf83ssi\", data + 18, 4) < 0) {",
         "            Py_DECREF(result);",
         "            return NULL;",
@@ -1160,9 +1399,12 @@ def _racf_type83_subtype1_parser_lines(
         [
             f"        security_offset = {header_integer_field_map['smf83od1']};",
             f"        if ({header_integer_field_map['smf83nd1']} != 0 &&",
-            f"            {header_integer_field_map['smf83ld1']} >= 96 &&",
+            f"            {header_integer_field_map['smf83ld1']} >= "
+            f"{action.security_minimum_length} &&",
             "            security_offset <= (unsigned long long)view->len &&",
-            "            security_offset + 96 <= (unsigned long long)view->len) {",
+            "            security_offset + "
+            f"{action.security_minimum_length} <= "
+            "(unsigned long long)view->len) {",
             "            if (",
         ]
     )
@@ -1185,17 +1427,6 @@ def _racf_type83_subtype1_parser_lines(
         ]
     )
     return lines
-
-
-def _compact_racf_type80_section_parser_lines(
-    record_type: int, fields_by_name: dict[str, dict[str, object]]
-) -> list[str]:
-    return _special_record_action_lines(
-        record_type,
-        (),
-        fields_by_name,
-        minimum_size=0,
-    )
 
 
 def _record_section_structs(
