@@ -542,6 +542,38 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn('set_long(result, "smf42bmn"', lines)
         self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
 
+    def test_type42_subtype15_above_bar_directory_is_generated(self) -> None:
+        module = setup_module()
+        fields_by_name = {
+            "smf42sty": {"name": "smf42sty", "offset": 20, "size": 2},
+            "smf42ops": {"name": "smf42ops", "offset": 24, "size": 4},
+        }
+        special_structs = {
+            "smf42sf": (
+                {"name": "smf42fc1", "offset": 0, "size": 4},
+                {"name": "smf42fc2", "offset": 4, "size": 2},
+                {"name": "smf42fc3", "offset": 6, "size": 2},
+                {"name": "smf42afc1", "offset": 16, "size": 4},
+                {"name": "smf42afc2", "offset": 20, "size": 2},
+                {"name": "smf42afc3", "offset": 22, "size": 2},
+            )
+        }
+
+        lines = "\n".join(
+            module._special_overlay_parser_lines(
+                42,
+                fields_by_name,
+                section_structs={},
+                special_structs=special_structs,
+            )
+        )
+
+        self.assertIn("read_unsigned_be(data + 20, 2) == 15", lines)
+        self.assertIn('result, "above_bar_relocate_sections", data, view->len', lines)
+        self.assertIn('set_long(result, "smf42afc1"', lines)
+        self.assertIn('set_long(result, "smf42afc2"', lines)
+        self.assertIn('set_long(result, "smf42afc3"', lines)
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(

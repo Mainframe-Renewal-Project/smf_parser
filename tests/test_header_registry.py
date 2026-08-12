@@ -161,6 +161,18 @@ class HeaderRegistryTests(unittest.TestCase):
             }.issubset(subtype_values)
         )
 
+    def test_type42_above_bar_overlay_actions_are_registered(self) -> None:
+        actions = SPECIAL_RECORD_ACTIONS[42]
+        above_bar_actions = [
+            action
+            for action in actions
+            if action.get("kind") == "subtype_struct_overlay_directory"
+            and action.get("directory_key") == "above_bar_relocate_sections"
+        ]
+
+        subtype_values = {int(action["subtype_value"]) for action in above_bar_actions}
+        self.assertEqual(subtype_values, {15, 16, 19})
+
 
 if __name__ == "__main__":
     unittest.main()
