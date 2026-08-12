@@ -25,6 +25,26 @@ SPECIAL_RECORD_STRUCT_NAMES: dict[int, tuple[str, ...]] = {
     119: ("SMF119SDefSect", "SMF119Ident"),
     1154: ("smf1154_ctrp", "smf1154_c_hdr"),
 }
+SPECIAL_RECORD_ACTIONS: dict[int, tuple[dict[str, str], ...]] = {
+    80: (
+        {
+            "kind": "compact_section_directory_fallback",
+            "key": "relocate_sections",
+            "anchor_field": "smf80des",
+            "relocate_field": "smf80evq",
+            "relocate_shift": "1",
+            "count_delta": "2",
+        },
+    ),
+    98: (
+        {
+            "kind": "long_triplet_directory",
+            "key": "relocate_sections",
+            "directory": "fixed_end",
+            "count_field": "smf98sdstripletsnum",
+        },
+    ),
+}
 FIELD_RE = re.compile(
     r"^\s*(?P<type>unsigned\s+char|char|unsigned\s+short|short|"
     r"unsigned\s+int|int|unsigned\s+long\s+long|long\s+long|"
@@ -558,31 +578,13 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
         "    result = PyDict_New();",
         "    if (result == NULL) { return NULL; }",
     ]
-    for field in fields:
-        field_name = str(field["name"])
-        offset = int(cast(int, field["offset"]))
-        size = int(cast(int, field["size"]))
-        if int(cast(int, field["array"])):
-            lines.extend(
-                [
-                    f"    if (set_bytes(result, \"{field_name}\", "
-                    f"data + {offset}, (Py_ssize_t){size}) < 0) {{",
-                    "        Py_DECREF(result);",
-                    "        return NULL;",
-                    "    }",
-                ]
-            )
-        else:
-            reader = "read_signed_be" if bool(field["signed"]) else "read_unsigned_be"
-            lines.extend(
-                [
-                    f"    if (set_long(result, \"{field_name}\", "
-                    f"{reader}(data + {offset}, (Py_ssize_t){size})) < 0) {{",
-                    "        Py_DECREF(result);",
-                    "        return NULL;",
-                    "    }",
-                ]
-            )
+    lines.extend(
+        _field_assignment_lines(
+            fields,
+            base_expression="data",
+            indent="    ",
+        )
+    )
     adjacent_section_fields = cast(
         tuple[dict[str, object], ...], record["adjacent_section_fields"]
     )
@@ -608,9 +610,15 @@ def _record_parser_function(record: dict[str, object]) -> list[str]:
     )
     lines.extend(_section_directory_parser_lines(fields_by_name, section_structs))
     lines.extend(_smf119_parser_lines(record_type, fields_by_name, special_structs))
-    lines.extend(_smf98_sds_parser_lines(record_type, fields))
+    lines.extend(
+        _special_record_action_lines(
+            record_type,
+            fields,
+            fields_by_name,
+            minimum_size=minimum_size,
+        )
+    )
     lines.extend(_smf1154_common_parser_lines(record_type, special_structs))
-    lines.extend(_compact_racf_type80_section_parser_lines(record_type, fields_by_name))
     lines.extend(
         _racf_type83_subtype1_parser_lines(
             record_type,
@@ -692,18 +700,15 @@ def _smf119_parser_lines(
         "                    smf119_ident_available = smf119_ident_length;",
         "                }",
     ]
-    for field in ident_fields:
-        field_name = str(field["name"])
-        if field_name.endswith(("rsvd1", "rsvd2")):
-            continue
-        lines.extend(
-            _guarded_field_assignment_lines(
-                field,
-                base_expression="smf119_ident",
-                available_expression="smf119_ident_available",
-                indent="                ",
-            )
+    lines.extend(
+        _field_assignment_lines(
+            ident_fields,
+            base_expression="smf119_ident",
+            indent="                ",
+            available_expression="smf119_ident_available",
+            skip_names=("SMF119TI_rsvd1", "SMF119TI_rsvd2"),
         )
+    )
     lines.extend(
         [
             "            }",
@@ -858,29 +863,118 @@ def _smf1154_common_parser_lines(
     return lines
 
 
-def _smf98_sds_parser_lines(
-    record_type: int, fields: tuple[dict[str, object], ...]
+def _special_record_action_lines(
+    record_type: int,
+    fields: tuple[dict[str, object], ...],
+    fields_by_name: dict[str, dict[str, object]],
+    *,
+    minimum_size: int,
 ) -> list[str]:
-    if record_type != 98:
-        return []
-    fields_by_name = {str(field["name"]): field for field in fields}
-    triplet_count = fields_by_name.get("smf98sdstripletsnum")
-    if triplet_count is None:
-        return []
-    triplet_count_offset = int(cast(int, triplet_count["offset"]))
-    sds_offset = max(
-        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
-        for field in fields
-    )
+    lines: list[str] = []
+    for action in SPECIAL_RECORD_ACTIONS.get(record_type, ()):
+        kind = action.get("kind")
+        if kind == "long_triplet_directory":
+            count_field = fields_by_name.get(str(action.get("count_field", "")))
+            if count_field is None:
+                continue
+            if action.get("directory") == "fixed_end":
+                directory_expression = str(minimum_size)
+            else:
+                continue
+            count_data_expression = _field_data_expression(
+                count_field,
+                base_expression="data",
+            )
+            lines.extend(
+                _long_triplet_directory_action_lines(
+                    key=str(action.get("key", "relocate_sections")),
+                    directory_expression=directory_expression,
+                    count_expression=(
+                        "read_unsigned_be("
+                        f"{count_data_expression}, "
+                        f"{int(cast(int, count_field['size']))})"
+                    ),
+                )
+            )
+            continue
+        if kind == "compact_section_directory_fallback":
+            anchor_field = fields_by_name.get(str(action.get("anchor_field", "")))
+            relocate_field = fields_by_name.get(str(action.get("relocate_field", "")))
+            if anchor_field is None or relocate_field is None:
+                continue
+            relocate_offset = int(cast(int, relocate_field["offset"])) + int(
+                action.get("relocate_shift", "0")
+            )
+            count_offset = relocate_offset + int(action.get("count_delta", "2"))
+            lines.extend(
+                _compact_section_directory_fallback_action_lines(
+                    key=str(action.get("key", "relocate_sections")),
+                    anchor_expression=str(int(cast(int, anchor_field["offset"]))),
+                    relocate_offset=relocate_offset,
+                    count_offset=count_offset,
+                )
+            )
+            continue
+        continue
+    return lines
+
+
+def _long_triplet_directory_action_lines(
+    *,
+    key: str,
+    directory_expression: str,
+    count_expression: str,
+) -> list[str]:
     return [
         "    if (append_self_defining_long_triplet_directory(",
-        "        result, \"relocate_sections\", data, view->len,",
-        f"        {sds_offset},",
-        f"        read_unsigned_be(data + {triplet_count_offset}, 2)) < 0) {{",
+        f"        result, \"{key}\", data, view->len,",
+        f"        {directory_expression},",
+        f"        {count_expression}) < 0) {{",
         "        Py_DECREF(result);",
         "        return NULL;",
         "    }",
     ]
+
+
+def _compact_section_directory_fallback_action_lines(
+    *,
+    key: str,
+    anchor_expression: str,
+    relocate_offset: int,
+    count_offset: int,
+) -> list[str]:
+    offset_expression = f"read_unsigned_be(data + {relocate_offset}, 2)"
+    count_expression = f"read_unsigned_be(data + {count_offset}, 2)"
+    return [
+        f"    if (PyDict_GetItemString(result, \"{key}\") == NULL && ",
+        f"        {offset_expression} != 0 &&",
+        f"        {count_expression} != 0) {{",
+        "        if (append_self_defining_section_directory(",
+        f"            result, \"{key}\", data, view->len,",
+        f"            {anchor_expression} + read_unsigned_be(",
+        f"                data + {relocate_offset}, 2),",
+        f"            {count_expression}) < 0) {{",
+        "            Py_DECREF(result);",
+        "            return NULL;",
+        "        }",
+        "    }",
+    ]
+
+
+def _smf98_sds_parser_lines(
+    record_type: int, fields: tuple[dict[str, object], ...]
+) -> list[str]:
+    fields_by_name = _field_map(fields)
+    minimum_size = max(
+        int(cast(int, field["offset"])) + int(cast(int, field["size"]))
+        for field in fields
+    )
+    return _special_record_action_lines(
+        record_type,
+        fields,
+        fields_by_name,
+        minimum_size=minimum_size,
+    )
 
 
 def _record_adjacent_section_fields(
@@ -901,32 +995,13 @@ def _adjacent_section_parser_lines(
         for field in fields
     )
     lines = [f"    if (view->len >= (Py_ssize_t){minimum_size}) {{"]
-    for field in fields:
-        field_name = str(field["name"])
-        offset = base_offset + int(cast(int, field["offset"]))
-        size = int(cast(int, field["size"]))
-        if int(cast(int, field["array"])):
-            lines.extend(
-                [
-                    f"        if (set_bytes(result, \"{field_name}\", ",
-                    f"            data + {offset}, (Py_ssize_t){size}) < 0) {{",
-                    "            Py_DECREF(result);",
-                    "            return NULL;",
-                    "        }",
-                ]
-            )
-        else:
-            reader = "read_signed_be" if bool(field["signed"]) else "read_unsigned_be"
-            lines.extend(
-                [
-                    f"        if (set_long(result, \"{field_name}\", ",
-                    f"            {reader}(data + {offset},",
-                    f"            (Py_ssize_t){size})) < 0) {{",
-                    "            Py_DECREF(result);",
-                    "            return NULL;",
-                    "        }",
-                ]
-            )
+    lines.extend(
+        _field_assignment_lines(
+            fields,
+            base_expression=f"data + {base_offset}",
+            indent="        ",
+        )
+    )
     for offset_field, length_field, count_field in _self_defining_triplets(fields):
         data_type = base_offset + int(cast(int, offset_field["offset"]))
         section_offset_field_offset = base_offset + int(
@@ -1045,22 +1120,12 @@ def _racf_type83_subtype1_parser_lines(
             "            if (",
         ]
     )
-    security_conditions: list[str] = []
-    for field in security_fields:
-        field_name = str(field["name"])
-        offset = int(cast(int, field["offset"]))
-        size = int(cast(int, field["size"]))
-        if int(cast(int, field["array"])):
-            security_conditions.append(
-                f"set_bytes(result, \"{field_name}\", "
-                f"data + security_offset + {offset}, {size}) < 0"
-            )
-            continue
-        reader = "read_signed_be" if bool(field["signed"]) else "read_unsigned_be"
-        security_conditions.append(
-            f"set_long(result, \"{field_name}\", "
-            f"{reader}(data + security_offset + {offset}, {size})) < 0"
+    security_conditions = list(
+        _field_assignment_conditions(
+            security_fields,
+            base_expression="data + security_offset",
         )
+    )
     for index, condition in enumerate(security_conditions):
         suffix = " ||" if index < len(security_conditions) - 1 else ") {"
         lines.append(f"                {condition}{suffix}")
@@ -1079,29 +1144,12 @@ def _racf_type83_subtype1_parser_lines(
 def _compact_racf_type80_section_parser_lines(
     record_type: int, fields_by_name: dict[str, dict[str, object]]
 ) -> list[str]:
-    if record_type != 80:
-        return []
-    descriptor = fields_by_name.get("smf80des")
-    event_qualifier = fields_by_name.get("smf80evq")
-    if descriptor is None or event_qualifier is None:
-        return []
-    descriptor_offset = int(cast(int, descriptor["offset"]))
-    compact_relocate_offset = int(cast(int, event_qualifier["offset"])) + 1
-    compact_count_offset = compact_relocate_offset + 2
-    return [
-        "    if (PyDict_GetItemString(result, \"relocate_sections\") == NULL && ",
-        f"        read_unsigned_be(data + {compact_relocate_offset}, 2) != 0 &&",
-        f"        read_unsigned_be(data + {compact_count_offset}, 2) != 0) {{",
-        "        if (append_self_defining_section_directory(",
-        "            result, \"relocate_sections\", data, view->len,",
-        f"            {descriptor_offset} + read_unsigned_be(",
-        f"                data + {compact_relocate_offset}, 2),",
-        f"            read_unsigned_be(data + {compact_count_offset}, 2)) < 0) {{",
-        "            Py_DECREF(result);",
-        "            return NULL;",
-        "        }",
-        "    }",
-    ]
+    return _special_record_action_lines(
+        record_type,
+        (),
+        fields_by_name,
+        minimum_size=0,
+    )
 
 
 def _record_section_structs(
@@ -1199,6 +1247,44 @@ def _guarded_field_assignment_lines(
         f"{indent}    return NULL;",
         f"{indent}}}",
     ]
+
+
+def _field_assignment_lines(
+    fields: tuple[dict[str, object], ...],
+    *,
+    base_expression: str,
+    indent: str,
+    available_expression: str | None = None,
+    skip_names: tuple[str, ...] = (),
+) -> list[str]:
+    lines: list[str] = []
+    for field in fields:
+        field_name = str(field["name"])
+        if field_name in skip_names or field_name.endswith("_end"):
+            continue
+        if available_expression is not None:
+            lines.extend(
+                _guarded_field_assignment_lines(
+                    field,
+                    base_expression=base_expression,
+                    available_expression=available_expression,
+                    indent=indent,
+                )
+            )
+            continue
+        condition = _field_assignment_conditions(
+            (field,),
+            base_expression=base_expression,
+        )[0]
+        lines.extend(
+            [
+                f"{indent}if ({condition}) {{",
+                f"{indent}    Py_DECREF(result);",
+                f"{indent}    return NULL;",
+                f"{indent}}}",
+            ]
+        )
+    return lines
 
 
 def _field_assignment_conditions(
