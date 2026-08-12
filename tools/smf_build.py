@@ -2481,12 +2481,6 @@ def _racf_type83_subtype1_parser_lines(
         section_structs.get(typed_action.variable_section_struct, ())
     )
     lines = [
-        f"    if (view->len >= (Py_ssize_t){subtype_primary_offset + 2} &&",
-        "        set_long(result, \"smf83typ\",",
-        f"        read_unsigned_be(data + {subtype_primary_offset}, 2)) < 0) {{",
-        "        Py_DECREF(result);",
-        "        return NULL;",
-        "    }",
         "    if (view->len >= 48 &&",
         "        ((!is_packed_smf_date(data + 10) &&",
         "        is_packed_smf_date(data + 6) &&",

@@ -172,6 +172,11 @@ class SetupGenerationTests(unittest.TestCase):
 
         self.assertIn("smf83_subtype_offset", lines)
         self.assertIn("smf83_sds_offset", lines)
+        self.assertNotIn(
+            "if (view->len >= (Py_ssize_t)20 &&\n"
+            "        set_long(result, \"smf83typ\",",
+            lines,
+        )
         self.assertIn("is_packed_smf_date(data + 6)", lines)
         self.assertIn("is_packed_smf_date(data + 10)", lines)
         self.assertIn("read_unsigned_be(data + 18, 2) == 1", lines)
