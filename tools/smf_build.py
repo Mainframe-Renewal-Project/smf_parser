@@ -47,12 +47,8 @@ class Smf1154CommonOverlayAction:
     ctrp_struct: str
     common_struct: str
     required_ctrp_names: tuple[str, ...]
-    ctrp_anchor_offset: int
-    ctrp_anchor_length: int
     common_directory_key: str
-    common_directory_count_expression: str
     subspec_directory_key: str
-    subspec_directory_offset_delta: int
 
 
 @dataclass(frozen=True)
@@ -190,16 +186,8 @@ def _build_special_record_actions(
                                 spec["required_ctrp_names"],
                             )
                         ),
-                        ctrp_anchor_offset=int(cast(int, spec["ctrp_anchor_offset"])),
-                        ctrp_anchor_length=int(cast(int, spec["ctrp_anchor_length"])),
                         common_directory_key=str(spec["common_directory_key"]),
-                        common_directory_count_expression=str(
-                            spec["common_directory_count_expression"]
-                        ),
                         subspec_directory_key=str(spec["subspec_directory_key"]),
-                        subspec_directory_offset_delta=int(
-                            cast(int, spec["subspec_directory_offset_delta"])
-                        ),
                     )
                 )
                 continue
@@ -388,17 +376,27 @@ def _include_dirs() -> tuple[Path, ...]:
 
     include_dir = _include_dir()
     include_dirs = [include_dir]
+
+    include_root = (
+        include_dir.parent if include_dir.name.lower() == "zos" else include_dir
+    )
+    if include_root not in include_dirs:
+        include_dirs.append(include_root)
+
+    for subdir in ("zos", "IBM"):
+        candidate = include_root / subdir
+        if candidate not in include_dirs:
+            include_dirs.append(candidate)
+
     configured_ibm_include = environ.get("PYSMF_IBM_INCLUDE")
     ibm_include_dir = (
         Path(configured_ibm_include)
         if configured_ibm_include
-        else include_dir.parent / "IBM"
+        else include_root / "IBM"
     )
     if ibm_include_dir != include_dir:
         include_dirs.append(ibm_include_dir)
-    include_root = include_dir.parent
-    if include_root not in include_dirs:
-        include_dirs.append(include_root)
+
     return tuple(include_dirs)
 
 
@@ -961,13 +959,13 @@ def _emit_smf1154_common_overlay(
     section_structs: dict[str, tuple[dict[str, object], ...]],
     special_structs: dict[str, tuple[dict[str, object], ...]],
 ) -> list[str]:
-    del fields_by_name
     del section_structs
     if not isinstance(action, Smf1154CommonOverlayAction):
         return []
     return _smf1154_common_parser_lines(
         record_type,
         special_structs,
+        fields_by_name=fields_by_name,
         action=action,
     )
 
@@ -1131,10 +1129,45 @@ def _smf119_triplet_max_count(
     return 1
 
 
+def _smf1154_ctrp_anchor_offset(
+    fields_by_name: dict[str, dict[str, object]] | None,
+    *,
+    fallback: int,
+) -> int:
+    if fields_by_name is None:
+        return fallback
+    for field_name in (
+        "smf1154df1",
+        "smf1154_df1",
+        "SMFHDR1_Ext_Len",
+    ):
+        field = fields_by_name.get(field_name)
+        if field is not None:
+            return int(cast(int, field["offset"]))
+    return fallback
+
+
+def _smf1154_common_triplet_count(
+    ctrp_field_map: dict[str, dict[str, object]],
+) -> int:
+    count = 0
+    for field_name in ctrp_field_map:
+        if not field_name.endswith("_offset"):
+            continue
+        prefix = field_name[: -len("_offset")]
+        if (
+            f"{prefix}_length" in ctrp_field_map
+            and f"{prefix}_number" in ctrp_field_map
+        ):
+            count += 1
+    return count if count > 0 else 1
+
+
 def _smf1154_common_parser_lines(
     record_type: int,
     special_structs: dict[str, tuple[dict[str, object], ...]],
     *,
+    fields_by_name: dict[str, dict[str, object]] | None = None,
     action: Smf1154CommonOverlayAction | None = None,
 ) -> list[str]:
     typed_action = action
@@ -1149,6 +1182,14 @@ def _smf1154_common_parser_lines(
     ctrp_field_map = _field_map(ctrp_fields)
     if not all(name in ctrp_field_map for name in typed_action.required_ctrp_names):
         return []
+    ctrp_anchor_offset = _smf1154_ctrp_anchor_offset(
+        fields_by_name,
+        fallback=24,
+    )
+    ctrp_anchor_length = int(cast(int, ctrp_field_map["smf1154_ctrp_trn"]["size"]))
+    common_directory_count_expression = str(
+        _smf1154_common_triplet_count(ctrp_field_map)
+    )
     ctrp_length = _struct_size(ctrp_fields)
     common_length = _struct_size(common_fields)
     ctrp_offset_expression = _field_data_expression(
@@ -1172,8 +1213,8 @@ def _smf1154_common_parser_lines(
         "        unsigned long long smf1154_subspec_offset;",
         "        unsigned long long smf1154_subspec_count;",
         "        smf1154_ctrp = "
-        f"{typed_action.ctrp_anchor_offset} + read_unsigned_be(data + "
-        f"{typed_action.ctrp_anchor_offset}, {typed_action.ctrp_anchor_length});",
+        f"{ctrp_anchor_offset} + read_unsigned_be(data + "
+        f"{ctrp_anchor_offset}, {ctrp_anchor_length});",
         "        if (smf1154_ctrp + "
         f"{ctrp_length} <= (unsigned long long)view->len) {{",
         "            smf1154_common_offset = read_unsigned_be(",
@@ -1235,7 +1276,7 @@ def _smf1154_common_parser_lines(
             indent="            ",
             key=typed_action.common_directory_key,
             directory_expression=f"smf1154_ctrp + {ctrp_directory_offset}",
-            count_expression=typed_action.common_directory_count_expression,
+            count_expression=common_directory_count_expression,
         )
     )
     lines.extend(
@@ -1271,10 +1312,7 @@ def _smf1154_common_parser_lines(
         _append_long_triplet_directory_lines(
             indent="                ",
             key=typed_action.subspec_directory_key,
-            directory_expression=(
-                "smf1154_subspec_offset + "
-                f"{typed_action.subspec_directory_offset_delta}"
-            ),
+            directory_expression="smf1154_subspec_offset + 4",
             count_expression="smf1154_subspec_count",
         )
     )

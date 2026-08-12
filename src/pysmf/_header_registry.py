@@ -27,6 +27,12 @@ def _target(
 HEADER_TARGETS = (
     _target("ifasmfh.h", (), generic=True),
     _target("ifasmfr.h", range(7), generic=True),
+    _target(
+        "csfsm82c.h",
+        (82,),
+        generic=False,
+        alternate_names=("CSFSM82C",),
+    ),
     *(
         _target(name, range(start, stop), generic=False)
         for name, start, stop in (
@@ -190,12 +196,8 @@ SPECIAL_RECORD_ACTIONS = {
                 "smf1154_subspec_length",
                 "smf1154_subspec_number",
             ),
-            "ctrp_anchor_offset": 24,
-            "ctrp_anchor_length": 2,
             "common_directory_key": "relocate_sections",
-            "common_directory_count_expression": "2",
             "subspec_directory_key": "extended_relocate_sections",
-            "subspec_directory_offset_delta": 4,
         },
     ),
 }
