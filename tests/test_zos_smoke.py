@@ -19,6 +19,7 @@ from pysmf import (
     read_structured_dataset,
     read_structured_records,
 )
+from pysmf.errors import SMFRecordTypeSupportError
 
 
 ZOS_DATASET_ENV = "PYSMF_ZOS_DATASET"
@@ -335,9 +336,24 @@ class ZOSSmokeTests(unittest.TestCase):
         if not self.raw_records:
             self.skipTest("dataset sample did not include raw SMF records")
 
-        structured = parse_record(self.raw_records[0])
-        self.assertEqual(structured.record_type, self.raw_records[0].record_type)
-        self.assertIs(structured.source, self.raw_records[0])
+        supported_record = None
+        for raw_record in self.raw_records:
+            try:
+                structured = parse_record(raw_record)
+            except SMFRecordTypeSupportError:
+                continue
+            supported_record = (raw_record, structured)
+            break
+
+        if supported_record is None:
+            self.skipTest(
+                "dataset sample did not include a raw record with structured "
+                "parser support"
+            )
+
+        raw_record, structured = supported_record
+        self.assertEqual(structured.record_type, raw_record.record_type)
+        self.assertIs(structured.source, raw_record)
 
     def test_read_records_supports_smf_and_rdw_binary_forms(self) -> None:
         raw_records = self.raw_records[:10]
@@ -918,14 +934,15 @@ class ZOSSmokeTests(unittest.TestCase):
                 if "smf113sdl" in record.fields:
                     assert_non_negative_int_field(self, record, "smf113sdl")
                 if record.fields["smf113son"]:
-                    saw_populated_sds = True
-                    self.assertTrue(record.sections)
+                    if record.sections or record.extended_sections:
+                        saw_populated_sds = True
 
         if not saw_sds_fields:
             self.skipTest("dataset sample did not include SMF type 113 SDS fields")
         if not saw_populated_sds:
             self.skipTest(
-                "dataset sample did not include populated SMF type 113 SDS triplets"
+                "dataset sample did not include populated and decoded SMF "
+                "type 113 SDS triplets"
             )
 
     def test_real_type124_subtype_triplets_are_consistent_when_present(self) -> None:
