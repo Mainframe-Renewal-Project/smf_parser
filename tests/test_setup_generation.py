@@ -1,12 +1,12 @@
 from __future__ import annotations
-import types
+import importlib
 import unittest
 from pathlib import Path
 
 
 def generated_setup_source() -> str:
-    setup_path = Path(__file__).parents[1] / "setup.py"
-    return setup_path.read_text(encoding="utf-8")
+    build_path = Path(__file__).parents[1] / "tools" / "smf_build.py"
+    return build_path.read_text(encoding="utf-8")
 
 
 def native_source() -> str:
@@ -15,37 +15,7 @@ def native_source() -> str:
 
 
 def setup_module():
-    setup_path = Path(__file__).parents[1] / "setup.py"
-    source = setup_path.read_text(encoding="utf-8")
-    source = "\n".join(
-        line
-        for line in source.splitlines()
-        if not line.startswith(("from setuptools", "from wheel"))
-    )
-    module = types.SimpleNamespace(__file__=str(setup_path))
-    namespace = module.__dict__
-
-    def setup_noop(*args, **kwargs) -> None:
-        del args, kwargs
-
-    def customize_compiler_noop(compiler) -> None:
-        del compiler
-
-    namespace.update(
-        {
-            "Extension": lambda *args, **kwargs: (args, kwargs),
-            "setup": setup_noop,
-            "CompileError": Exception,
-            "new_compiler": lambda: None,
-            "customize_compiler": customize_compiler_noop,
-            "get_platform": lambda: "test-platform",
-            "build_ext_base": object,
-            "build_py_base": object,
-            "bdist_wheel_base": object,
-        }
-    )
-    exec(compile(source, str(setup_path), "exec"), namespace)
-    return module
+    return importlib.import_module("tools.smf_build")
 
 
 def generated_function_source(source: str, name: str) -> str:
@@ -176,8 +146,18 @@ class SetupGenerationTests(unittest.TestCase):
 
     def test_racf_type83_subtype1_security_fields_are_generated(self) -> None:
         module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IFASMFR9"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
 
-        lines = "\n".join(module._racf_type83_subtype1_parser_lines(83))
+        lines = "\n".join(
+            module._racf_type83_subtype1_parser_lines(
+                83,
+                module._record_section_structs(83, structs),
+                module._record_special_structs(83, structs),
+            )
+        )
 
         self.assertIn("smf83_subtype_offset", lines)
         self.assertIn("smf83_sds_offset", lines)
@@ -191,12 +171,16 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn('set_long(result, "smf83evq"', lines)
         self.assertIn('set_bytes(result, "smf83usr"', lines)
         self.assertIn('set_bytes(result, "smf83jbn"', lines)
-        self.assertIn("data + smf83_sds_offset + 12", lines)
+        self.assertIn(
+            'security_offset = read_unsigned_be(data + smf83_sds_offset + 12, 4);',
+            lines,
+        )
         self.assertIn('result, "relocate_sections", data, view->len', lines)
+        self.assertIn("1, 1, 2) < 0", lines)
         self.assertIn("PyErr_Clear();", lines)
         self.assertNotIn("type83_security_sections", lines)
 
-        self.assertEqual(module._racf_type83_subtype1_parser_lines(80), [])
+        self.assertEqual(module._racf_type83_subtype1_parser_lines(80, {}, {}), [])
 
     def test_racf_type83_fixed_header_fields_are_preserved(self) -> None:
         module = setup_module()
@@ -277,27 +261,34 @@ class SetupGenerationTests(unittest.TestCase):
 
     def test_smf98_sds_long_triplet_directory_is_generated(self) -> None:
         module = setup_module()
-        fields_by_name = {
-            "smf98sdstripletsnum": {
-                "name": "smf98sdstripletsnum",
-                "offset": 28,
-                "size": 2,
-            },
-        }
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IHAHR098"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
+        fields = module._record_struct_fields(structs["smfr98"])
 
-        lines = "\n".join(module._smf98_sds_parser_lines(98, fields_by_name))
+        lines = "\n".join(module._smf98_sds_parser_lines(98, fields))
 
         self.assertIn("append_self_defining_long_triplet_directory", lines)
         self.assertIn('result, "relocate_sections", data, view->len', lines)
         self.assertIn("48,", lines)
         self.assertIn("read_unsigned_be(data + 28, 2)", lines)
 
-        self.assertEqual(module._smf98_sds_parser_lines(90, fields_by_name), [])
+        self.assertEqual(module._smf98_sds_parser_lines(90, fields), [])
 
     def test_smf1154_common_directory_is_generated(self) -> None:
         module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "zos" / "ifar1154.h"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
 
-        lines = "\n".join(module._smf1154_common_parser_lines(1154))
+        lines = "\n".join(
+            module._smf1154_common_parser_lines(
+                1154,
+                module._record_special_structs(1154, structs),
+            )
+        )
 
         self.assertIn("smf1154_ctrp = 24 + read_unsigned_be(data + 24, 2)", lines)
         self.assertIn('set_long(result, "smf1154_c_offset"', lines)
@@ -308,7 +299,7 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn('set_bytes(result, "smf1154_c_userid"', lines)
         self.assertIn('set_bytes(result, "smf1154_c_jobname"', lines)
 
-        self.assertEqual(module._smf1154_common_parser_lines(98), [])
+        self.assertEqual(module._smf1154_common_parser_lines(98, {}), [])
 
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
@@ -461,8 +452,20 @@ class SetupGenerationTests(unittest.TestCase):
 
     def test_smf119_self_defining_sections_are_generated(self) -> None:
         module = setup_module()
+        header = (
+            Path(__file__).parents[1] / "local_headers" / "zos" / "ezasmf.h"
+        ).read_text(encoding="utf-8")
+        structs = module._header_structs(header)
+        header_fields = module._record_struct_fields(structs["Smf119Header"])
+        fields_by_name = {field["name"]: field for field in header_fields}
 
-        lines = "\n".join(module._smf119_parser_lines(119))
+        lines = "\n".join(
+            module._smf119_parser_lines(
+                119,
+                fields_by_name,
+                module._record_special_structs(119, structs),
+            )
+        )
 
         self.assertIn("SMF119SD_TRN", lines)
         self.assertIn("SMF119IDOff", lines)
@@ -473,8 +476,10 @@ class SetupGenerationTests(unittest.TestCase):
         self.assertIn('set_bytes(result, "SMF119TI_SYSName"', lines)
         self.assertIn('set_bytes(result, "SMF119TI_Stack"', lines)
         self.assertIn('set_bytes(result, "SMF119TI_UserID"', lines)
+        self.assertIn('set_long(result, "SMF119TI_ASID"', lines)
+        self.assertIn('set_long(result, "SMF119TI_RecordID"', lines)
 
-        self.assertEqual(module._smf119_parser_lines(118), [])
+        self.assertEqual(module._smf119_parser_lines(118, {}, {}), [])
 
     def test_record_struct_names_include_common_ibm_variants(self) -> None:
         module = setup_module()

@@ -97,6 +97,47 @@ class StructuredRecordTests(unittest.TestCase):
         self.assertEqual(parsed.field_text("smf80grp"), "SYS1")
         self.assertEqual(parsed.field_text("smf80jbn"), "JOBNAME")
 
+    def test_parse_record_uses_native_structured_field_normalizer(self) -> None:
+        from pysmf import records
+
+        calls: list[str] = []
+
+        def parse_native_record(record_type: int, data: bytes) -> dict[str, object]:
+            del record_type, data
+            calls.append("parse")
+            return native_type80_fields()
+
+        def structured_fields(
+            fields: dict[str, object],
+        ) -> tuple[
+            dict[str, int | bytes | str],
+            dict[str, int | bytes],
+            tuple[tuple[int, bytes, int], ...],
+            tuple[tuple[int, bytes, int], ...],
+        ]:
+            calls.append("normalize")
+            self.assertIn("smf80usr", fields)
+            return (
+                {"smf80rty": 80, "smf80usr": "SECADM1"},
+                {"smf80rty": 80, "smf80usr": ebcdic("SECADM1 ")},
+                ((1, ebcdic("ALTUSER"), 104),),
+                ((257, ebcdic("PERMIT"), 140),),
+            )
+
+        native = SimpleNamespace(
+            parse_record=parse_native_record,
+            structured_fields=structured_fields,
+        )
+
+        with patch.object(records, "_native", native):
+            parsed = parse_record(standard_record(80))
+
+        self.assertEqual(calls, ["parse", "normalize"])
+        self.assertEqual(parsed["smf80usr"], "SECADM1")
+        self.assertEqual(parsed.raw_fields["smf80usr"], ebcdic("SECADM1 "))
+        self.assertEqual(parsed.sections[0].text, "ALTUSER")
+        self.assertEqual(parsed.extended_sections[0].text, "PERMIT")
+
     def test_parse_record_exposes_decoded_text_helpers(self) -> None:
         from pysmf import records
 

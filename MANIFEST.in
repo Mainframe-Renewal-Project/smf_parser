@@ -1,2 +1,3 @@
 include src/pysmf/_native.c
+include tools/smf_build.py
 prune tests

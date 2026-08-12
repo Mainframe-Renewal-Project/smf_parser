@@ -285,6 +285,20 @@ def _native_fields(record_type: int, data: bytes | bytearray | memoryview):
 def _structured_record(
     record_type: int, fields: dict[str, object], *, source: SMFRecord | None = None
 ) -> StructuredSMFRecord:
+    structured_fields_native = getattr(_native, "structured_fields", None)
+    if structured_fields_native is not None:
+        scalar_fields, raw_fields, regular_sections, extended_sections = (
+            structured_fields_native(fields)
+        )
+        return StructuredSMFRecord(
+            record_type=record_type,
+            fields=scalar_fields,
+            sections=_section_triples(regular_sections),
+            extended_sections=_section_triples(extended_sections),
+            raw_fields=raw_fields,
+            source=source,
+        )
+
     regular_sections = _sections(fields, "relocate_sections")
     extended_sections = _sections(fields, "extended_relocate_sections")
     scalar_fields: dict[str, int | bytes | str] = {}
@@ -429,6 +443,15 @@ def _sections(fields: dict[str, object], key: str) -> tuple[SMFFieldSection, ...
             offset=_section_int(section, "offset"),
         )
         for section in sections
+    )
+
+
+def _section_triples(
+    sections: Iterable[tuple[int, bytes, int]],
+) -> tuple[SMFFieldSection, ...]:
+    return tuple(
+        SMFFieldSection(data_type=data_type, data=data, offset=offset)
+        for data_type, data, offset in sections
     )
 
 

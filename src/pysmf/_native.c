@@ -846,6 +846,208 @@ static PyObject *py_clean_ebcdic_text(PyObject *self, PyObject *args, PyObject *
     return cleaned;
 }
 
+static int copy_section_value(PyObject *section, const char *key, PyObject **value) {
+    *value = PyMapping_GetItemString(section, key);
+    if (*value == NULL) {
+        PyErr_Format(PyExc_TypeError, "SMF section entry is missing %s", key);
+        return -1;
+    }
+    return 0;
+}
+
+static PyObject *normalized_sections(PyObject *fields, const char *key) {
+    PyObject *sections = PyDict_GetItemString(fields, key);
+    PyObject *sequence;
+    PyObject *result;
+    Py_ssize_t index;
+    Py_ssize_t length;
+
+    if (sections == NULL) {
+        return PyTuple_New(0);
+    }
+    sequence = PySequence_Fast(sections, "SMF section field is not iterable");
+    if (sequence == NULL) {
+        return NULL;
+    }
+    length = PySequence_Fast_GET_SIZE(sequence);
+    result = PyTuple_New(length);
+    if (result == NULL) {
+        Py_DECREF(sequence);
+        return NULL;
+    }
+    for (index = 0; index < length; index++) {
+        PyObject *section = PySequence_Fast_GET_ITEM(sequence, index);
+        PyObject *data_type;
+        PyObject *data;
+        PyObject *offset;
+        PyObject *triplet;
+        if (copy_section_value(section, "data_type", &data_type) < 0) {
+            Py_DECREF(sequence);
+            Py_DECREF(result);
+            return NULL;
+        }
+        if (copy_section_value(section, "data", &data) < 0) {
+            Py_DECREF(data_type);
+            Py_DECREF(sequence);
+            Py_DECREF(result);
+            return NULL;
+        }
+        if (copy_section_value(section, "offset", &offset) < 0) {
+            Py_DECREF(data_type);
+            Py_DECREF(data);
+            Py_DECREF(sequence);
+            Py_DECREF(result);
+            return NULL;
+        }
+        if (!PyLong_Check(data_type) || !PyBytes_Check(data) || !PyLong_Check(offset)) {
+            Py_DECREF(data_type);
+            Py_DECREF(data);
+            Py_DECREF(offset);
+            Py_DECREF(sequence);
+            Py_DECREF(result);
+            PyErr_SetString(PyExc_TypeError, "SMF section entries must contain integer data_type, bytes data, and integer offset");
+            return NULL;
+        }
+        triplet = PyTuple_New(3);
+        if (triplet == NULL) {
+            Py_DECREF(data_type);
+            Py_DECREF(data);
+            Py_DECREF(offset);
+            Py_DECREF(sequence);
+            Py_DECREF(result);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(triplet, 0, data_type);
+        PyTuple_SET_ITEM(triplet, 1, data);
+        PyTuple_SET_ITEM(triplet, 2, offset);
+        PyTuple_SET_ITEM(result, index, triplet);
+    }
+    Py_DECREF(sequence);
+    return result;
+}
+
+static int set_normalized_field(PyObject *scalar_fields, PyObject *raw_fields, PyObject *key, PyObject *value) {
+    if (PyBytes_Check(value)) {
+        PyObject *decoded;
+        PyObject *cleaned;
+        int plausible;
+        char *data;
+        Py_ssize_t length;
+        if (PyBytes_AsStringAndSize(value, &data, &length) < 0) {
+            return -1;
+        }
+        if (PyDict_SetItem(raw_fields, key, value) < 0) {
+            return -1;
+        }
+        decoded = decode_trimmed_ebcdic_text((const unsigned char *)data, length, "cp1047");
+        if (decoded == NULL) {
+            return -1;
+        }
+        cleaned = clean_decoded_text_object(decoded);
+        Py_DECREF(decoded);
+        if (cleaned == NULL) {
+            return -1;
+        }
+        plausible = plausible_fixed_text_object(cleaned);
+        if (plausible < 0) {
+            Py_DECREF(cleaned);
+            return -1;
+        }
+        if (plausible) {
+            if (PyDict_SetItem(scalar_fields, key, cleaned) < 0) {
+                Py_DECREF(cleaned);
+                return -1;
+            }
+            Py_DECREF(cleaned);
+            return 0;
+        }
+        Py_DECREF(cleaned);
+        return PyDict_SetItem(scalar_fields, key, value);
+    }
+    if (PyLong_Check(value)) {
+        if (PyDict_SetItem(scalar_fields, key, value) < 0) {
+            return -1;
+        }
+        return PyDict_SetItem(raw_fields, key, value);
+    }
+    PyErr_SetString(PyExc_TypeError, "SMF fields must be integers or bytes");
+    return -1;
+}
+
+static PyObject *py_structured_fields(PyObject *self, PyObject *args) {
+    PyObject *fields;
+    PyObject *scalar_fields;
+    PyObject *raw_fields;
+    PyObject *sections;
+    PyObject *extended_sections;
+    PyObject *result;
+    PyObject *key;
+    PyObject *value;
+    Py_ssize_t position = 0;
+
+    if (!PyArg_ParseTuple(args, "O!", &PyDict_Type, &fields)) {
+        return NULL;
+    }
+    scalar_fields = PyDict_New();
+    raw_fields = PyDict_New();
+    if (scalar_fields == NULL || raw_fields == NULL) {
+        Py_XDECREF(scalar_fields);
+        Py_XDECREF(raw_fields);
+        return NULL;
+    }
+    while (PyDict_Next(fields, &position, &key, &value)) {
+        int is_regular_sections;
+        int is_extended_sections;
+        if (!PyUnicode_Check(key)) {
+            Py_DECREF(scalar_fields);
+            Py_DECREF(raw_fields);
+            PyErr_SetString(PyExc_TypeError, "SMF field names must be strings");
+            return NULL;
+        }
+        is_regular_sections = PyUnicode_CompareWithASCIIString(key, "relocate_sections") == 0;
+        is_extended_sections = PyUnicode_CompareWithASCIIString(key, "extended_relocate_sections") == 0;
+        if (is_regular_sections || is_extended_sections) {
+            continue;
+        }
+        if (PyErr_Occurred()) {
+            Py_DECREF(scalar_fields);
+            Py_DECREF(raw_fields);
+            return NULL;
+        }
+        if (set_normalized_field(scalar_fields, raw_fields, key, value) < 0) {
+            Py_DECREF(scalar_fields);
+            Py_DECREF(raw_fields);
+            return NULL;
+        }
+    }
+    sections = normalized_sections(fields, "relocate_sections");
+    if (sections == NULL) {
+        Py_DECREF(scalar_fields);
+        Py_DECREF(raw_fields);
+        return NULL;
+    }
+    extended_sections = normalized_sections(fields, "extended_relocate_sections");
+    if (extended_sections == NULL) {
+        Py_DECREF(scalar_fields);
+        Py_DECREF(raw_fields);
+        Py_DECREF(sections);
+        return NULL;
+    }
+    result = PyTuple_New(4);
+    if (result == NULL) {
+        Py_DECREF(scalar_fields);
+        Py_DECREF(raw_fields);
+        Py_DECREF(sections);
+        Py_DECREF(extended_sections);
+        return NULL;
+    }
+    PyTuple_SET_ITEM(result, 0, scalar_fields);
+    PyTuple_SET_ITEM(result, 1, raw_fields);
+    PyTuple_SET_ITEM(result, 2, sections);
+    PyTuple_SET_ITEM(result, 3, extended_sections);
+    return result;
+}
+
 static PyObject *py_decoded_tokens(PyObject *self, PyObject *args, PyObject *kwargs) {
     static char *keywords[] = {"text", "min_length", "max_length", NULL};
     PyObject *text;
@@ -1108,6 +1310,7 @@ static PyMethodDef methods[] = {
     {"decode_ebcdic", (PyCFunction)py_decode_ebcdic, METH_VARARGS | METH_KEYWORDS, "Decode a fixed-width EBCDIC SMF field."},
     {"clean_decoded_text", py_clean_decoded_text, METH_VARARGS, "Clean decoded SMF text."},
     {"clean_ebcdic_text", (PyCFunction)py_clean_ebcdic_text, METH_VARARGS | METH_KEYWORDS, "Decode and clean EBCDIC SMF text."},
+    {"structured_fields", py_structured_fields, METH_VARARGS, "Normalize generated SMF parser fields into Python API values."},
     {"is_plausible_fixed_text", py_is_plausible_fixed_text, METH_VARARGS, "Return whether cleaned decoded text looks like fixed SMF text."},
     {"is_plausible_identifier", (PyCFunction)py_is_plausible_identifier, METH_VARARGS | METH_KEYWORDS, "Return whether an EBCDIC field is a plausible SMF identifier."},
     {"decoded_tokens", (PyCFunction)py_decoded_tokens, METH_VARARGS | METH_KEYWORDS, "Return decoded SMF text tokens."},
