@@ -106,6 +106,7 @@ HEADER_TARGETS = (
             ("iwmsmf90.h", (97,)),
             ("iwmsmf97.h", (97,)),
             ("ihahr098.h", (98,)),
+            ("iggindvx.h", (98,)),
             ("hwismf6a.h", (106,)),
             ("hisysmfr.h", (113,)),
             ("ezasmf.h", (119,)),
@@ -115,6 +116,7 @@ HEADER_TARGETS = (
             ("iazs1153.h", (1153,)),
             ("ifar1154.h", (1154,)),
             ("iazs1154.h", (1154,)),
+            ("ifas4128.h", (1154,)),
             ("csvs1156.h", (1156,)),
             ("iosds983.h", (983,)),
             ("iosds984.h", (984,)),
@@ -167,6 +169,27 @@ SPECIAL_RECORD_ACTIONS = {
             "directory": "fixed_end",
             "count_field": "smf98sdstripletsnum",
         },
+        {
+            "kind": "smf98_subtype_overlay",
+            "subtype_value": 7,
+            "subtype_field_name": "smf98sty",
+            "data_offset_field_name": "smf98dof",
+            "subtype_struct": "smf98_7_data",
+            "required_record_names": (
+                "smf98sty",
+                "smf98dof",
+            ),
+            "required_subtype_names": (
+                "smf98_7_datatripletsnum",
+                "smf98_7_datatripletslen",
+                "smf98_7_bucket1of",
+            ),
+            "triplet_count_name": "smf98_7_datatripletsnum",
+            "triplet_length_name": "smf98_7_datatripletslen",
+            "triplet_directory_name": "smf98_7_bucket1of",
+            "directory_key": "extended_relocate_sections",
+            "minimum_section_length": 40,
+        },
     ),
     119: (
         {
@@ -199,6 +222,24 @@ SPECIAL_RECORD_ACTIONS = {
             "common_directory_key": "relocate_sections",
             "subspec_directory_key": "extended_relocate_sections",
         },
+        {
+            "kind": "smf1154_subtype_overlay",
+            "subtype_value": 128,
+            "subtype_struct": "smf1154_128",
+            "required_names": (
+                "smf1154_128_trn",
+                "smf1154_128_sds_length",
+                "smf1154_128_crypctrs_offset",
+                "smf1154_128_crypctrs_length",
+                "smf1154_128_crypctrs_number",
+            ),
+            "triplet_offset_name": "smf1154_128_crypctrs_offset",
+            "triplet_length_name": "smf1154_128_crypctrs_length",
+            "triplet_number_name": "smf1154_128_crypctrs_number",
+            "section_length_name": "smf1154_128_sds_length",
+            "directory_key": "extended_relocate_sections",
+            "minimum_section_length": 12,
+        },
     ),
 }
 
@@ -219,6 +260,7 @@ def _derive_special_record_struct_names(
                 "common_struct",
                 "triplet_struct",
                 "ident_struct",
+                "subtype_struct",
             ):
                 value = action_spec.get(key)
                 if isinstance(value, str) and value:

@@ -329,6 +329,86 @@ class SetupGenerationTests(unittest.TestCase):
 
         self.assertEqual(module._smf1154_common_parser_lines(98, {}), [])
 
+    def test_smf1154_subtype_128_overlay_is_generated(self) -> None:
+        module = setup_module()
+        common_header = (
+            Path(__file__).parents[1] / "local_headers" / "zos" / "ifar1154.h"
+        ).read_text(encoding="utf-8")
+        subtype_header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IFAS4128"
+        ).read_text(encoding="utf-8")
+
+        common_structs = module._header_structs(common_header)
+        subtype_structs = module._header_structs(subtype_header)
+        special_structs = module._merge_special_structs(
+            module._record_special_structs(1154, common_structs),
+            module._record_special_structs(1154, subtype_structs),
+        )
+
+        lines = "\n".join(
+            module._smf1154_subtype_parser_lines(1154, special_structs)
+        )
+
+        self.assertIn('set_long(result, "smf1154_subtype", 128)', lines)
+        self.assertIn('set_long(result, "smf1154_128_trn"', lines)
+        self.assertIn('set_long(result, "smf1154_128_crypctrs_offset"', lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+
+    def test_record_structs_pool_special_structs_across_headers(self) -> None:
+        module = setup_module()
+        include_dirs = (
+            Path(__file__).parents[1] / "local_headers" / "zos",
+            Path(__file__).parents[1] / "local_headers" / "IBM",
+        )
+
+        records = module._record_structs(include_dirs)
+        type1154_record = next(
+            record for record in records if record["record_type"] == 1154
+        )
+
+        self.assertIn("smf1154_128", type1154_record["special_structs"])
+        self.assertIn("smf1154_ctrp", type1154_record["special_structs"])
+
+    def test_smf98_subtype_7_overlay_is_generated(self) -> None:
+        module = setup_module()
+        record_header = (
+            Path(__file__).parents[1] / "local_headers" / "zos" / "ihahr098.h"
+        ).read_text(encoding="utf-8")
+        subtype_header = (
+            Path(__file__).parents[1] / "local_headers" / "IBM" / "IGGINDVX"
+        ).read_text(encoding="utf-8")
+
+        record_structs = module._header_structs(record_header)
+        subtype_structs = module._header_structs(subtype_header)
+        record_fields = module._record_struct_fields(record_structs["smfrcd98"])
+        fields_by_name = {field["name"]: field for field in record_fields}
+        special_structs = module._merge_special_structs(
+            module._record_special_structs(98, record_structs),
+            module._record_special_structs(98, subtype_structs),
+        )
+
+        lines = "\n".join(
+            module._smf98_subtype_parser_lines(98, fields_by_name, special_structs)
+        )
+
+        self.assertIn("== 7)", lines)
+        self.assertIn('set_long(result, "smf98_7_datatripletsnum"', lines)
+        self.assertIn('set_long(result, "smf98_7_bucket1of"', lines)
+        self.assertIn('result, "extended_relocate_sections", data, view->len', lines)
+
+    def test_record_structs_pool_type98_special_structs_across_headers(self) -> None:
+        module = setup_module()
+        include_dirs = (
+            Path(__file__).parents[1] / "local_headers" / "zos",
+            Path(__file__).parents[1] / "local_headers" / "IBM",
+        )
+
+        records = module._record_structs(include_dirs)
+        type98_record = next(record for record in records if record["record_type"] == 98)
+
+        self.assertIn("smf98_7_data", type98_record["special_structs"])
+        self.assertIn("smf98sds", type98_record["special_structs"])
+
     def test_variable_sections_report_invalid_header_metadata(self) -> None:
         native = native_source()
         variable_parser = generated_function_source(

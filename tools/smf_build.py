@@ -52,6 +52,36 @@ class Smf1154CommonOverlayAction:
 
 
 @dataclass(frozen=True)
+class Smf1154SubtypeOverlayAction:
+    kind: Literal["smf1154_subtype_overlay"]
+    subtype_value: int
+    subtype_struct: str
+    required_names: tuple[str, ...]
+    triplet_offset_name: str
+    triplet_length_name: str
+    triplet_number_name: str
+    section_length_name: str
+    directory_key: str
+    minimum_section_length: int
+
+
+@dataclass(frozen=True)
+class Smf98SubtypeOverlayAction:
+    kind: Literal["smf98_subtype_overlay"]
+    subtype_value: int
+    subtype_field_name: str
+    data_offset_field_name: str
+    subtype_struct: str
+    required_record_names: tuple[str, ...]
+    required_subtype_names: tuple[str, ...]
+    triplet_count_name: str
+    triplet_length_name: str
+    triplet_directory_name: str
+    directory_key: str
+    minimum_section_length: int
+
+
+@dataclass(frozen=True)
 class Racf83Subtype1SecurityAction:
     kind: Literal["racf83_subtype1_security"]
     security_struct: str
@@ -83,6 +113,8 @@ SpecialRecordAction = (
     LongTripletDirectoryAction
     | CompactSectionDirectoryFallbackAction
     | Smf1154CommonOverlayAction
+    | Smf1154SubtypeOverlayAction
+    | Smf98SubtypeOverlayAction
     | Racf83Subtype1SecurityAction
     | Smf119IdentOverlayAction
 )
@@ -120,6 +152,20 @@ def _validate_special_record_actions(
                     raise RuntimeError(
                         "smf1154_common_overlay action can only be registered "
                         f"for type 1154, found {record_type}"
+                    )
+                continue
+            if isinstance(action, Smf1154SubtypeOverlayAction):
+                if record_type != 1154:
+                    raise RuntimeError(
+                        "smf1154_subtype_overlay action can only be registered "
+                        f"for type 1154, found {record_type}"
+                    )
+                continue
+            if isinstance(action, Smf98SubtypeOverlayAction):
+                if record_type != 98:
+                    raise RuntimeError(
+                        "smf98_subtype_overlay action can only be registered "
+                        f"for type 98, found {record_type}"
                     )
                 continue
             if isinstance(action, Racf83Subtype1SecurityAction):
@@ -188,6 +234,62 @@ def _build_special_record_actions(
                         ),
                         common_directory_key=str(spec["common_directory_key"]),
                         subspec_directory_key=str(spec["subspec_directory_key"]),
+                    )
+                )
+                continue
+            if kind == "smf1154_subtype_overlay":
+                typed_actions.append(
+                    Smf1154SubtypeOverlayAction(
+                        kind="smf1154_subtype_overlay",
+                        subtype_value=int(cast(int, spec["subtype_value"])),
+                        subtype_struct=str(spec["subtype_struct"]),
+                        required_names=tuple(
+                            str(name)
+                            for name in cast(
+                                tuple[object, ...],
+                                spec["required_names"],
+                            )
+                        ),
+                        triplet_offset_name=str(spec["triplet_offset_name"]),
+                        triplet_length_name=str(spec["triplet_length_name"]),
+                        triplet_number_name=str(spec["triplet_number_name"]),
+                        section_length_name=str(spec["section_length_name"]),
+                        directory_key=str(spec["directory_key"]),
+                        minimum_section_length=int(
+                            cast(int, spec["minimum_section_length"])
+                        ),
+                    )
+                )
+                continue
+            if kind == "smf98_subtype_overlay":
+                typed_actions.append(
+                    Smf98SubtypeOverlayAction(
+                        kind="smf98_subtype_overlay",
+                        subtype_value=int(cast(int, spec["subtype_value"])),
+                        subtype_field_name=str(spec["subtype_field_name"]),
+                        data_offset_field_name=str(spec["data_offset_field_name"]),
+                        subtype_struct=str(spec["subtype_struct"]),
+                        required_record_names=tuple(
+                            str(name)
+                            for name in cast(
+                                tuple[object, ...],
+                                spec["required_record_names"],
+                            )
+                        ),
+                        required_subtype_names=tuple(
+                            str(name)
+                            for name in cast(
+                                tuple[object, ...],
+                                spec["required_subtype_names"],
+                            )
+                        ),
+                        triplet_count_name=str(spec["triplet_count_name"]),
+                        triplet_length_name=str(spec["triplet_length_name"]),
+                        triplet_directory_name=str(spec["triplet_directory_name"]),
+                        directory_key=str(spec["directory_key"]),
+                        minimum_section_length=int(
+                            cast(int, spec["minimum_section_length"])
+                        ),
                     )
                 )
                 continue
@@ -564,6 +666,7 @@ def _generate_record_parser_source(
 def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     seen_record_types: set[int] = set()
+    resolved_targets: list[tuple[dict[str, Any], str, dict[str, str]]] = []
     for target in _header_targets():
         resolved = _resolve_header(target, include_dirs)
         if resolved is None:
@@ -571,35 +674,53 @@ def _record_structs(include_dirs: tuple[Path, ...]) -> list[dict[str, object]]:
         include_name, header_path = resolved
         header_text = _read_header_text(header_path)
         structs = _header_structs(header_text)
-        for record_type in target["record_types"]:
-            if record_type in seen_record_types:
+        resolved_targets.append((target, include_name, structs))
+
+    pooled_special_structs: dict[int, dict[str, tuple[dict[str, object], ...]]] = {}
+    for target, _, structs in resolved_targets:
+        for record_type in cast(tuple[object, ...], target["record_types"]):
+            typed_record_type = int(cast(int | str, record_type))
+            pool = pooled_special_structs.setdefault(typed_record_type, {})
+            for name in SPECIAL_RECORD_STRUCT_NAMES.get(typed_record_type, ()):
+                if name in pool:
+                    continue
+                body = structs.get(name)
+                if body is None:
+                    continue
+                pool[name] = _record_struct_fields(body)
+
+    for target, include_name, structs in resolved_targets:
+        for record_type in cast(tuple[object, ...], target["record_types"]):
+            typed_record_type = int(cast(int | str, record_type))
+            if typed_record_type in seen_record_types:
                 continue
-            struct_name = _record_struct_name(int(record_type), structs)
+            struct_name = _record_struct_name(typed_record_type, structs)
             if struct_name is None:
                 continue
             fields = _record_struct_fields(structs[struct_name])
-            record_options = RECORD_TYPE_OPTIONS.get(int(record_type), {})
+            record_options = RECORD_TYPE_OPTIONS.get(typed_record_type, {})
             allow_empty_fields = bool(record_options.get("allow_empty_fields", False))
             if not fields and not allow_empty_fields:
                 continue
             records.append(
                 {
-                    "record_type": int(record_type),
+                    "record_type": typed_record_type,
                     "struct_name": struct_name,
                     "include": include_name,
                     "fields": fields,
                     "adjacent_section_fields": _record_adjacent_section_fields(
-                        int(record_type), structs
+                        typed_record_type, structs
                     ),
                     "section_structs": _record_section_structs(
-                        int(record_type), structs
+                        typed_record_type, structs
                     ),
-                    "special_structs": _record_special_structs(
-                        int(record_type), structs
+                    "special_structs": _merge_special_structs(
+                        _record_special_structs(typed_record_type, structs),
+                        pooled_special_structs.get(typed_record_type, {}),
                     ),
                 }
             )
-            seen_record_types.add(int(record_type))
+            seen_record_types.add(typed_record_type)
     return records
 
 
@@ -970,6 +1091,44 @@ def _emit_smf1154_common_overlay(
     )
 
 
+def _emit_smf1154_subtype_overlay(
+    *,
+    action: SpecialRecordAction,
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+) -> list[str]:
+    del section_structs
+    if not isinstance(action, Smf1154SubtypeOverlayAction):
+        return []
+    return _smf1154_subtype_parser_lines(
+        record_type,
+        special_structs,
+        fields_by_name=fields_by_name,
+        action=action,
+    )
+
+
+def _emit_smf98_subtype_overlay(
+    *,
+    action: SpecialRecordAction,
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    section_structs: dict[str, tuple[dict[str, object], ...]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+) -> list[str]:
+    del section_structs
+    if not isinstance(action, Smf98SubtypeOverlayAction):
+        return []
+    return _smf98_subtype_parser_lines(
+        record_type,
+        fields_by_name,
+        special_structs,
+        action=action,
+    )
+
+
 def _emit_racf83_subtype1_security(
     *,
     action: SpecialRecordAction,
@@ -991,6 +1150,8 @@ def _emit_racf83_subtype1_security(
 
 _SPECIAL_OVERLAY_ACTION_EMITTERS: dict[str, Callable[..., list[str]]] = {
     "smf1154_common_overlay": _emit_smf1154_common_overlay,
+    "smf1154_subtype_overlay": _emit_smf1154_subtype_overlay,
+    "smf98_subtype_overlay": _emit_smf98_subtype_overlay,
     "racf83_subtype1_security": _emit_racf83_subtype1_security,
     "smf119_ident_overlay": _emit_smf119_ident_overlay,
 }
@@ -1318,6 +1479,246 @@ def _smf1154_common_parser_lines(
     )
     lines.extend(
         [
+            "            }",
+            "        }",
+            "    }",
+        ]
+    )
+    return lines
+
+
+def _smf1154_subtype_parser_lines(
+    record_type: int,
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+    *,
+    fields_by_name: dict[str, dict[str, object]] | None = None,
+    action: Smf1154SubtypeOverlayAction | None = None,
+) -> list[str]:
+    typed_action = action
+    if typed_action is None:
+        typed_action = _action_for_record_type(record_type, Smf1154SubtypeOverlayAction)
+    if typed_action is None:
+        return []
+    common_action = _action_for_record_type(record_type, Smf1154CommonOverlayAction)
+    if common_action is None:
+        return []
+    ctrp_fields = special_structs.get(common_action.ctrp_struct)
+    subtype_fields = special_structs.get(typed_action.subtype_struct)
+    if not ctrp_fields or not subtype_fields:
+        return []
+    ctrp_field_map = _field_map(ctrp_fields)
+    subtype_field_map = _field_map(subtype_fields)
+    if not all(name in ctrp_field_map for name in common_action.required_ctrp_names):
+        return []
+    if not all(name in subtype_field_map for name in typed_action.required_names):
+        return []
+
+    ctrp_anchor_offset = _smf1154_ctrp_anchor_offset(fields_by_name, fallback=24)
+    ctrp_anchor_length = int(cast(int, ctrp_field_map["smf1154_ctrp_trn"]["size"]))
+    ctrp_length = _struct_size(ctrp_fields)
+    minimum_subspec_length = max(
+        typed_action.minimum_section_length,
+        _struct_size(subtype_fields),
+    )
+    ctrp_subspec_offset_expression = _field_data_expression(
+        ctrp_field_map["smf1154_subspec_offset"],
+        base_expression="data + smf1154_ctrp",
+    )
+    ctrp_subspec_length_expression = _field_data_expression(
+        ctrp_field_map["smf1154_subspec_length"],
+        base_expression="data + smf1154_ctrp",
+    )
+    section_length_field = subtype_field_map[typed_action.section_length_name]
+    triplet_offset_field = subtype_field_map[typed_action.triplet_offset_name]
+    triplet_length_field = subtype_field_map[typed_action.triplet_length_name]
+    triplet_number_field = subtype_field_map[typed_action.triplet_number_name]
+    subtype_conditions = list(
+        _field_assignment_conditions(
+            subtype_fields,
+            base_expression="data + smf1154_subspec_offset",
+        )
+    )
+    lines = [
+        "    {",
+        "        unsigned long long smf1154_ctrp;",
+        "        unsigned long long smf1154_subspec_offset;",
+        "        unsigned long long smf1154_subspec_length;",
+        "        unsigned long long smf1154_subtype_triplet_offset;",
+        "        unsigned long long smf1154_subtype_triplet_length;",
+        "        unsigned long long smf1154_subtype_triplet_count;",
+        "        unsigned long long smf1154_subtype_section_length;",
+        "        smf1154_ctrp = "
+        f"{ctrp_anchor_offset} + read_unsigned_be(data + "
+        f"{ctrp_anchor_offset}, {ctrp_anchor_length});",
+        "        if (smf1154_ctrp + "
+        f"{ctrp_length} <= (unsigned long long)view->len) {{",
+        "            smf1154_subspec_offset = read_unsigned_be(",
+        f"                {ctrp_subspec_offset_expression}, 4);",
+        "            smf1154_subspec_length = read_unsigned_be(",
+        f"                {ctrp_subspec_length_expression}, 2);",
+        "            if (smf1154_subspec_offset + "
+        f"{minimum_subspec_length} <= (unsigned long long)view->len &&",
+        "                smf1154_subspec_length >= "
+        f"{minimum_subspec_length}) {{",
+        "                smf1154_subtype_section_length = read_unsigned_be(",
+        "                    data + smf1154_subspec_offset + "
+        f"{int(cast(int, section_length_field['offset']))},",
+        f"                    {int(cast(int, section_length_field['size']))});",
+        "                if (smf1154_subtype_section_length >= "
+        f"{minimum_subspec_length} &&",
+        "                    smf1154_subtype_section_length <= "
+        "smf1154_subspec_length) {",
+        "                    if (set_long(result, \"smf1154_subtype\", "
+        f"{typed_action.subtype_value}) < 0) {{",
+        "                        Py_DECREF(result);",
+        "                        return NULL;",
+        "                    }",
+        "                    if (",
+    ]
+    for index, condition in enumerate(subtype_conditions):
+        suffix = " ||" if index < len(subtype_conditions) - 1 else ") {"
+        lines.append(f"                        {condition}{suffix}")
+    lines.extend(
+        [
+            "                        Py_DECREF(result);",
+            "                        return NULL;",
+            "                    }",
+            "                }",
+            "                smf1154_subtype_triplet_offset = read_unsigned_be(",
+            "                    data + smf1154_subspec_offset + "
+            f"{int(cast(int, triplet_offset_field['offset']))},",
+            f"                    {int(cast(int, triplet_offset_field['size']))});",
+            "                smf1154_subtype_triplet_length = read_unsigned_be(",
+            "                    data + smf1154_subspec_offset + "
+            f"{int(cast(int, triplet_length_field['offset']))},",
+            f"                    {int(cast(int, triplet_length_field['size']))});",
+            "                smf1154_subtype_triplet_count = read_unsigned_be(",
+            "                    data + smf1154_subspec_offset + "
+            f"{int(cast(int, triplet_number_field['offset']))},",
+            f"                    {int(cast(int, triplet_number_field['size']))});",
+            "                if (smf1154_subtype_triplet_count > 0 &&",
+            "                    smf1154_subtype_triplet_length > 0 &&",
+            "                    smf1154_subtype_triplet_offset <= "
+            "(unsigned long long)view->len) {",
+        ]
+    )
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="                    ",
+            key=typed_action.directory_key,
+            directory_expression="smf1154_subtype_triplet_offset",
+            count_expression="smf1154_subtype_triplet_count",
+        )
+    )
+    lines.extend(
+        [
+            "                }",
+            "            }",
+            "        }",
+            "    }",
+        ]
+    )
+    return lines
+
+
+def _smf98_subtype_parser_lines(
+    record_type: int,
+    fields_by_name: dict[str, dict[str, object]],
+    special_structs: dict[str, tuple[dict[str, object], ...]],
+    *,
+    action: Smf98SubtypeOverlayAction | None = None,
+) -> list[str]:
+    typed_action = action
+    if typed_action is None:
+        typed_action = _action_for_record_type(record_type, Smf98SubtypeOverlayAction)
+    if typed_action is None:
+        return []
+    subtype_fields = special_structs.get(typed_action.subtype_struct)
+    if not subtype_fields:
+        return []
+    subtype_field_map = _field_map(subtype_fields)
+    if not all(name in fields_by_name for name in typed_action.required_record_names):
+        return []
+    if not all(
+        name in subtype_field_map for name in typed_action.required_subtype_names
+    ):
+        return []
+    subtype_field = fields_by_name[typed_action.subtype_field_name]
+    data_offset_field = fields_by_name[typed_action.data_offset_field_name]
+    triplet_count_field = subtype_field_map[typed_action.triplet_count_name]
+    triplet_length_field = subtype_field_map[typed_action.triplet_length_name]
+    triplet_directory_field = subtype_field_map[typed_action.triplet_directory_name]
+    minimum_section_length = max(
+        typed_action.minimum_section_length,
+        _struct_size(subtype_fields),
+    )
+    subtype_conditions = list(
+        _field_assignment_conditions(
+            subtype_fields,
+            base_expression="data + smf98_subtype_data_offset",
+        )
+    )
+    subtype_field_expression = _field_data_expression(
+        subtype_field,
+        base_expression="data",
+    )
+    data_offset_expression = _field_data_expression(
+        data_offset_field,
+        base_expression="data",
+    )
+    lines = [
+        "    {",
+        "        unsigned long long smf98_subtype_data_offset;",
+        "        unsigned long long smf98_subtype_triplet_count;",
+        "        unsigned long long smf98_subtype_triplet_length;",
+        "        unsigned long long smf98_subtype_triplet_directory;",
+        "        if (read_unsigned_be(",
+        f"                {subtype_field_expression},",
+        f"                {int(cast(int, subtype_field['size']))}) == "
+        f"{typed_action.subtype_value}) {{",
+        "            smf98_subtype_data_offset = read_unsigned_be(",
+        f"                {data_offset_expression},",
+        f"                {int(cast(int, data_offset_field['size']))});",
+        "            if (smf98_subtype_data_offset + "
+        f"{minimum_section_length} <= (unsigned long long)view->len) {{",
+        "                if (",
+    ]
+    for index, condition in enumerate(subtype_conditions):
+        suffix = " ||" if index < len(subtype_conditions) - 1 else ") {"
+        lines.append(f"                    {condition}{suffix}")
+    lines.extend(
+        [
+            "                    Py_DECREF(result);",
+            "                    return NULL;",
+            "                }",
+            "                smf98_subtype_triplet_count = read_unsigned_be(",
+            "                    data + smf98_subtype_data_offset + "
+            f"{int(cast(int, triplet_count_field['offset']))},",
+            f"                    {int(cast(int, triplet_count_field['size']))});",
+            "                smf98_subtype_triplet_length = read_unsigned_be(",
+            "                    data + smf98_subtype_data_offset + "
+            f"{int(cast(int, triplet_length_field['offset']))},",
+            f"                    {int(cast(int, triplet_length_field['size']))});",
+            "                smf98_subtype_triplet_directory =",
+            "                    smf98_subtype_data_offset + "
+            f"{int(cast(int, triplet_directory_field['offset']))};",
+            "                if (smf98_subtype_triplet_count > 0 &&",
+            "                    smf98_subtype_triplet_length > 0 &&",
+            "                    smf98_subtype_triplet_directory <= "
+            "(unsigned long long)view->len) {",
+        ]
+    )
+    lines.extend(
+        _append_long_triplet_directory_lines(
+            indent="                    ",
+            key=typed_action.directory_key,
+            directory_expression="smf98_subtype_triplet_directory",
+            count_expression="smf98_subtype_triplet_count",
+        )
+    )
+    lines.extend(
+        [
+            "                }",
             "            }",
             "        }",
             "    }",
@@ -1667,6 +2068,15 @@ def _record_special_structs(
             continue
         special_structs[name] = _record_struct_fields(body)
     return special_structs
+
+
+def _merge_special_structs(
+    primary: dict[str, tuple[dict[str, object], ...]],
+    secondary: dict[str, tuple[dict[str, object], ...]],
+) -> dict[str, tuple[dict[str, object], ...]]:
+    merged = dict(secondary)
+    merged.update(primary)
+    return merged
 
 
 def _field_map(
